@@ -2,11 +2,13 @@
 from flask import Flask, jsonify, request, render_template, redirect, session, url_for, flash
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.middleware.proxy_fix import ProxyFix
 import sqlite3, threading, time as _time, schedule as sched, os, json, secrets
 from datetime import datetime
 from google import genai
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 DB  = "tasks.db"
 
 from config import FLASK_SECRET, GEMINI_API_KEY
