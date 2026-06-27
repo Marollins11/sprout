@@ -1,0 +1,562 @@
+# app.py
+from flask import Flask, jsonify, request, render_template, redirect, session
+import sqlite3, threading, time as _time, schedule as sched, os, json, secrets
+from datetime import datetime
+from google import genai
+
+app = Flask(__name__)
+DB  = "tasks.db"
+
+from config import FLASK_SECRET, GEMINI_API_KEY
+app.secret_key = FLASK_SECRET
+_genai_client = genai.Client(api_key=GEMINI_API_KEY)
+
+FAMILY_PALETTES = {
+    "work":     ["1F6FEB", "1565C0", "0D47A1", "3B82F6", "60A5FA", "93C5FD", "BFDBFE"],
+    "school":   ["1A7F37", "166534", "14532D", "22C55E", "4ADE80", "86EFAC", "BBF7D0"],
+    "personal": ["6B21A8", "7E22CE", "9333EA", "A855F7", "C084FC", "DDD6FE"],
+}
+AUTO_PALETTE = ["C25100", "0E7490", "B45309", "BE185D", "065F46", "1D4ED8"]
+auto_idx = 0
+
+VOICE_SYSTEM = """You are Sprout, a voice-first personal desk assistant.
+Respond with EXACTLY ONE structured reply or a plain conversational answer.
+ADD TASK:       TASK|title|family|sub-project
+MOVE STATUS:    MOVE_STATUS|partial title|new_status  (todo/in_progress/done)
+REASSIGN:       MOVE_PROJECT|partial title|family|new sub-project
+FLAG/UNFLAG:    FLAG|partial title|1 or 0
+FILTER BOARD:   FILTER|family|sub-project  (use "all" to clear)
+SET REMINDER:   REMINDER|HH:MM|task description
+CANVAS SYNC:    CANVAS_SYNC
+For anything else reply conversationally in 2-3 sentences.
+Infer the family from context: work=professional, school=courses, personal=everything else.
+Keep replies short — they are spoken aloud."""
+
+_chat_sessions = {}
+
+
+def get_chat(sid):
+    if sid not in _chat_sessions:
+        _chat_sessions[sid] = _genai_client.chats.create(
+            model="gemini-2.5-pro",
+            config={"system_instruction": VOICE_SYSTEM}
+        )
+    return _chat_sessions[sid]
+
+
+# ── Database ──────────────────────────────────────────────────────────────────
+
+def get_db():
+    db = sqlite3.connect(DB)
+    db.row_factory = sqlite3.Row
+    return db
+
+
+def init_db():
+    db = get_db()
+    db.execute("""CREATE TABLE IF NOT EXISTS tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        status TEXT DEFAULT 'todo',
+        project TEXT DEFAULT 'personal',
+        family TEXT DEFAULT 'personal',
+        color TEXT DEFAULT '#555555',
+        flagged INTEGER DEFAULT 0,
+        created_at TEXT,
+        due_date TEXT,
+        description TEXT
+    )""")
+    for col, defn in [("due_date", "TEXT"), ("description", "TEXT")]:
+        try:
+            db.execute(f"ALTER TABLE tasks ADD COLUMN {col} {defn}")
+        except Exception:
+            pass
+    db.execute("""CREATE TABLE IF NOT EXISTS projects (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL,
+        family TEXT NOT NULL,
+        color TEXT NOT NULL
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS reminders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        time TEXT, task TEXT, fired INTEGER DEFAULT 0
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS calendar_accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        label TEXT NOT NULL,
+        credentials TEXT,
+        active INTEGER DEFAULT 1,
+        created_at TEXT
+    )""")
+    db.execute("INSERT OR IGNORE INTO projects VALUES (1,'personal','personal','#6B21A8')")
+    db.commit()
+
+
+def get_or_create_project(name, family):
+    global auto_idx
+    db = get_db()
+    nm = name.lower().strip()
+    fm = (family or "").lower().strip()
+    row = db.execute("SELECT color FROM projects WHERE name=?", (nm,)).fetchone()
+    if row:
+        return row["color"]
+    if fm in FAMILY_PALETTES:
+        used = [r["color"] for r in db.execute(
+            "SELECT color FROM projects WHERE family=?", (fm,)).fetchall()]
+        pal = FAMILY_PALETTES[fm]
+        color = next((c for c in pal if c not in used), pal[-1])
+    else:
+        color = AUTO_PALETTE[auto_idx % len(AUTO_PALETTE)]
+        auto_idx += 1
+        if fm:
+            FAMILY_PALETTES[fm] = [color]
+    db.execute("INSERT OR IGNORE INTO projects (name,family,color) VALUES (?,?,?)",
+               (nm, fm or "other", "#" + color))
+    db.commit()
+    return "#" + color
+
+
+# ── Voice command handler ────────────────────────────────────────────────────
+
+def handle_voice_reply(raw, host_url):
+    """Execute a Gemini structured reply against the DB. Returns (spoken_text, action)."""
+    action = {}
+    db = get_db()
+
+    if raw.startswith("TASK|"):
+        _, title, family, project = raw.split("|", 3)
+        color = get_or_create_project(project, family)
+        db.execute(
+            "INSERT INTO tasks (title,status,project,family,color,created_at) VALUES (?,?,?,?,?,?)",
+            (title, "todo", project.lower(), family.lower(), color, datetime.now().isoformat())
+        )
+        db.commit()
+        return f"Added {title} to {project}.", action
+
+    if raw.startswith("MOVE_STATUS|"):
+        _, match, status = raw.split("|", 2)
+        task = db.execute(
+            "SELECT id FROM tasks WHERE instr(lower(title), ?) > 0", (match.lower(),)
+        ).fetchone()
+        if not task:
+            return "I couldn't find that task.", action
+        db.execute("UPDATE tasks SET status=? WHERE id=?", (status, task["id"]))
+        db.commit()
+        return f"Moved to {status.replace('_', ' ')}.", action
+
+    if raw.startswith("MOVE_PROJECT|"):
+        _, match, family, project = raw.split("|", 3)
+        task = db.execute(
+            "SELECT id FROM tasks WHERE instr(lower(title), ?) > 0", (match.lower(),)
+        ).fetchone()
+        if not task:
+            return "I couldn't find that task.", action
+        color = get_or_create_project(project, family)
+        db.execute(
+            "UPDATE tasks SET project=?,family=?,color=? WHERE id=?",
+            (project.lower(), family.lower(), color, task["id"])
+        )
+        db.commit()
+        return f"Moved to {project}.", action
+
+    if raw.startswith("FLAG|"):
+        _, match, flagged = raw.split("|", 2)
+        task = db.execute(
+            "SELECT id FROM tasks WHERE instr(lower(title), ?) > 0", (match.lower(),)
+        ).fetchone()
+        if not task:
+            return "I couldn't find that task.", action
+        db.execute("UPDATE tasks SET flagged=? WHERE id=?", (int(flagged), task["id"]))
+        db.commit()
+        return "Flagged." if flagged == "1" else "Flag removed.", action
+
+    if raw.startswith("FILTER|"):
+        _, family, sub = raw.split("|", 2)
+        action = {"type": "FILTER", "family": family, "sub": sub}
+        return "Showing all tasks." if family == "all" else f"Filtering to {sub}.", action
+
+    if raw.startswith("REMINDER|"):
+        _, t, task_desc = raw.split("|", 2)
+        db.execute("INSERT INTO reminders (time,task) VALUES (?,?)", (t, task_desc))
+        db.commit()
+        return f"Reminder set for {t}.", action
+
+    if raw.strip() == "CANVAS_SYNC":
+        from canvas_sync import sync_to_kanban
+        base = host_url.rstrip("/")
+        threading.Thread(target=lambda: sync_to_kanban(base), daemon=True).start()
+        return "Syncing Canvas now.", action
+
+    return raw, action
+
+
+# ── Core routes ───────────────────────────────────────────────────────────────
+
+@app.route("/")
+def index():
+    return render_template("dashboard.html")
+
+
+@app.route("/api/tasks")
+def get_tasks():
+    tasks = get_db().execute(
+        "SELECT * FROM tasks ORDER BY flagged DESC, created_at DESC"
+    ).fetchall()
+    return jsonify([dict(t) for t in tasks])
+
+
+@app.route("/api/tasks", methods=["POST"])
+def add_task():
+    d = request.json
+    color = get_or_create_project(d.get("project", "personal"), d.get("family", "personal"))
+    db = get_db()
+    db.execute(
+        "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description) VALUES (?,?,?,?,?,?,?,?)",
+        (d["title"], "todo", d.get("project", "personal").lower(),
+         d.get("family", "personal").lower(), color, datetime.now().isoformat(),
+         d.get("due_date"), d.get("description"))
+    )
+    db.commit()
+    return jsonify({"ok": True, "color": color})
+
+
+@app.route("/api/tasks/<int:tid>", methods=["PATCH"])
+def update_task(tid):
+    d = request.json
+    db = get_db()
+    if "status"      in d: db.execute("UPDATE tasks SET status=?      WHERE id=?", (d["status"], tid))
+    if "flagged"     in d: db.execute("UPDATE tasks SET flagged=?     WHERE id=?", (d["flagged"], tid))
+    if "due_date"    in d: db.execute("UPDATE tasks SET due_date=?    WHERE id=?", (d["due_date"], tid))
+    if "description" in d: db.execute("UPDATE tasks SET description=? WHERE id=?", (d["description"], tid))
+    if "title"       in d: db.execute("UPDATE tasks SET title=?       WHERE id=?", (d["title"], tid))
+    if "project" in d:
+        color = get_or_create_project(d["project"], d.get("family", ""))
+        db.execute("UPDATE tasks SET project=?,family=?,color=? WHERE id=?",
+                   (d["project"], d.get("family", ""), color, tid))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/tasks/<int:tid>", methods=["DELETE"])
+def delete_task(tid):
+    db = get_db()
+    db.execute("DELETE FROM tasks WHERE id=?", (tid,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/projects")
+def get_projects():
+    rows = get_db().execute("SELECT * FROM projects ORDER BY family,name").fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/reminders", methods=["POST"])
+def add_reminder():
+    d = request.json
+    db = get_db()
+    db.execute("INSERT INTO reminders (time,task) VALUES (?,?)", (d["time"], d["task"]))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/reminders/pending")
+def pending_reminders():
+    now = datetime.now().strftime("%H:%M")
+    db = get_db()
+    rows = db.execute(
+        "SELECT id, task FROM reminders WHERE time=? AND fired=0", (now,)
+    ).fetchall()
+    for row in rows:
+        db.execute("UPDATE reminders SET fired=1 WHERE id=?", (row["id"],))
+    db.commit()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/events")
+def get_events():
+    from calendar_sync import get_all_events
+    events = get_all_events()
+    try:
+        from canvas_sync import get_canvas_events_for_calendar
+        events += get_canvas_events_for_calendar()
+    except Exception:
+        pass
+    row = get_db().execute(
+        "SELECT credentials FROM calendar_accounts WHERE type='canvas_ical' AND active=1 LIMIT 1"
+    ).fetchone()
+    if row:
+        try:
+            from ical_sync import fetch_ical_events
+            events += fetch_ical_events(json.loads(row["credentials"])["url"])
+        except Exception as e:
+            print(f"iCal fetch error: {e}")
+    return jsonify(sorted(events, key=lambda x: x["start"]))
+
+
+@app.route("/api/canvas_sync", methods=["POST"])
+def do_canvas_sync():
+    from canvas_sync import sync_to_kanban
+    sync_to_kanban(request.host_url.rstrip("/"))
+    return jsonify({"ok": True})
+
+
+# ── Canvas iCal feed ──────────────────────────────────────────────────────────
+
+@app.route("/api/canvas/ical", methods=["GET"])
+def get_canvas_ical():
+    row = get_db().execute(
+        "SELECT id, credentials FROM calendar_accounts WHERE type='canvas_ical' LIMIT 1"
+    ).fetchone()
+    if not row:
+        return jsonify({"url": None})
+    return jsonify({"id": row["id"], "url": json.loads(row["credentials"])["url"]})
+
+
+@app.route("/api/canvas/ical", methods=["POST"])
+def save_canvas_ical():
+    d = request.json
+    url = (d.get("url") or "").strip()
+    if not url:
+        return jsonify({"ok": False, "error": "URL required"}), 400
+    db = get_db()
+    db.execute("DELETE FROM calendar_accounts WHERE type='canvas_ical'")
+    db.execute(
+        "INSERT INTO calendar_accounts (type,label,credentials,active,created_at) VALUES (?,?,?,1,?)",
+        ("canvas_ical", "Canvas Calendar", json.dumps({"url": url}), datetime.now().isoformat())
+    )
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/canvas/ical", methods=["DELETE"])
+def delete_canvas_ical():
+    db = get_db()
+    db.execute("DELETE FROM calendar_accounts WHERE type='canvas_ical'")
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/canvas/ical/sync", methods=["POST"])
+def sync_canvas_ical_now():
+    row = get_db().execute(
+        "SELECT credentials FROM calendar_accounts WHERE type='canvas_ical' LIMIT 1"
+    ).fetchone()
+    if not row:
+        return jsonify({"ok": False, "error": "No Canvas feed configured"}), 400
+    url = json.loads(row["credentials"])["url"]
+    host = request.host_url.rstrip("/")
+    threading.Thread(target=lambda: _run_ical_sync(url, host), daemon=True).start()
+    return jsonify({"ok": True})
+
+
+def _run_ical_sync(url, host):
+    try:
+        from ical_sync import sync_ical_to_kanban
+        sync_ical_to_kanban(url, host)
+    except Exception as e:
+        print(f"Canvas iCal sync error: {e}")
+
+
+# ── Voice ─────────────────────────────────────────────────────────────────────
+
+@app.route("/api/voice", methods=["POST"])
+def voice_command():
+    d = request.json
+    text = (d.get("text") or "").strip()
+    if not text:
+        return jsonify({"reply": "", "action": {}})
+
+    sid = session.get("chat_id")
+    if not sid:
+        sid = secrets.token_hex(8)
+        session["chat_id"] = sid
+
+    chat = get_chat(sid)
+    response = chat.send_message(text)
+    reply, action = handle_voice_reply(response.text.strip(), request.host_url)
+    return jsonify({"reply": reply, "action": action})
+
+
+# ── Calendar accounts ─────────────────────────────────────────────────────────
+
+@app.route("/api/calendar/accounts")
+def list_calendar_accounts():
+    rows = get_db().execute(
+        "SELECT id, type, label, active FROM calendar_accounts ORDER BY created_at"
+    ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/calendar/accounts/<int:aid>", methods=["DELETE"])
+def delete_calendar_account(aid):
+    db = get_db()
+    db.execute("DELETE FROM calendar_accounts WHERE id=?", (aid,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+# ── Google OAuth ──────────────────────────────────────────────────────────────
+
+@app.route("/api/calendar/auth/google/start")
+def google_auth_start():
+    from google_auth_oauthlib.flow import Flow
+    from config import GOOGLE_CREDS
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+    flow = Flow.from_client_secrets_file(
+        GOOGLE_CREDS,
+        scopes=[
+            "https://www.googleapis.com/auth/calendar.readonly",
+            "https://www.googleapis.com/auth/userinfo.email",
+            "openid",
+        ],
+        redirect_uri=request.host_url.rstrip("/") + "/api/calendar/auth/google/callback"
+    )
+    auth_url, state = flow.authorization_url(access_type="offline", include_granted_scopes="true")
+    session["google_state"] = state
+    return redirect(auth_url)
+
+
+@app.route("/api/calendar/auth/google/callback")
+def google_auth_callback():
+    from google_auth_oauthlib.flow import Flow
+    from config import GOOGLE_CREDS
+    import requests as req
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+    redirect_uri = request.host_url.rstrip("/") + "/api/calendar/auth/google/callback"
+    flow = Flow.from_client_secrets_file(
+        GOOGLE_CREDS,
+        scopes=[
+            "https://www.googleapis.com/auth/calendar.readonly",
+            "https://www.googleapis.com/auth/userinfo.email",
+            "openid",
+        ],
+        redirect_uri=redirect_uri,
+        state=session.get("google_state")
+    )
+    flow.fetch_token(authorization_response=request.url)
+    creds = flow.credentials
+    r = req.get(f"https://www.googleapis.com/oauth2/v1/userinfo?access_token={creds.token}")
+    email = r.json().get("email", "Google Account")
+    db = get_db()
+    db.execute(
+        "INSERT INTO calendar_accounts (type,label,credentials,active,created_at) VALUES (?,?,?,1,?)",
+        ("google", email, creds.to_json(), datetime.now().isoformat())
+    )
+    db.commit()
+    return redirect("/?accounts=1")
+
+
+# ── Outlook OAuth ─────────────────────────────────────────────────────────────
+
+@app.route("/api/calendar/auth/outlook/start")
+def outlook_auth_start():
+    import msal
+    from config import OUTLOOK_CLIENT_ID, OUTLOOK_SECRET, OUTLOOK_TENANT
+    msal_app = msal.ConfidentialClientApplication(
+        OUTLOOK_CLIENT_ID,
+        client_credential=OUTLOOK_SECRET,
+        authority=f"https://login.microsoftonline.com/{OUTLOOK_TENANT}"
+    )
+    state = secrets.token_urlsafe(16)
+    session["outlook_state"] = state
+    redirect_uri = request.host_url.rstrip("/") + "/api/calendar/auth/outlook/callback"
+    auth_url = msal_app.get_authorization_request_url(
+        scopes=["https://graph.microsoft.com/Calendars.Read", "offline_access"],
+        redirect_uri=redirect_uri,
+        state=state
+    )
+    return redirect(auth_url)
+
+
+@app.route("/api/calendar/auth/outlook/callback")
+def outlook_auth_callback():
+    import msal
+    import requests as req
+    from config import OUTLOOK_CLIENT_ID, OUTLOOK_SECRET, OUTLOOK_TENANT
+    if request.args.get("state") != session.get("outlook_state"):
+        return "State mismatch — please try connecting again.", 400
+    redirect_uri = request.host_url.rstrip("/") + "/api/calendar/auth/outlook/callback"
+    msal_app = msal.ConfidentialClientApplication(
+        OUTLOOK_CLIENT_ID,
+        client_credential=OUTLOOK_SECRET,
+        authority=f"https://login.microsoftonline.com/{OUTLOOK_TENANT}"
+    )
+    result = msal_app.acquire_token_by_authorization_code(
+        request.args["code"],
+        scopes=["https://graph.microsoft.com/Calendars.Read", "offline_access"],
+        redirect_uri=redirect_uri
+    )
+    if "error" in result:
+        return f"Auth error: {result.get('error_description', result['error'])}", 400
+    r = req.get("https://graph.microsoft.com/v1.0/me",
+                headers={"Authorization": f"Bearer {result['access_token']}"})
+    info = r.json()
+    email = info.get("mail") or info.get("userPrincipalName", "Outlook Account")
+    db = get_db()
+    db.execute(
+        "INSERT INTO calendar_accounts (type,label,credentials,active,created_at) VALUES (?,?,?,1,?)",
+        ("outlook", email, json.dumps(result), datetime.now().isoformat())
+    )
+    db.commit()
+    return redirect("/?accounts=1")
+
+
+# ── iCloud ────────────────────────────────────────────────────────────────────
+
+@app.route("/api/calendar/auth/icloud", methods=["POST"])
+def icloud_auth():
+    import caldav
+    d = request.json
+    username = (d.get("username") or "").strip()
+    password = (d.get("password") or "").strip()
+    if not username or not password:
+        return jsonify({"ok": False, "error": "Apple ID and password are required"}), 400
+    try:
+        client = caldav.DAVClient(
+            url="https://caldav.icloud.com",
+            username=username,
+            password=password
+        )
+        client.principal()
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    db = get_db()
+    db.execute(
+        "INSERT INTO calendar_accounts (type,label,credentials,active,created_at) VALUES (?,?,?,1,?)",
+        ("icloud", username, json.dumps({"username": username, "password": password}),
+         datetime.now().isoformat())
+    )
+    db.commit()
+    return jsonify({"ok": True})
+
+
+# ── Background jobs ───────────────────────────────────────────────────────────
+
+def canvas_auto_loop():
+    def job():
+        try:
+            from canvas_sync import sync_to_kanban
+            sync_to_kanban("http://localhost:5001")
+        except Exception as e:
+            print(f"Canvas API sync error: {e}")
+        try:
+            row = get_db().execute(
+                "SELECT credentials FROM calendar_accounts WHERE type='canvas_ical' AND active=1 LIMIT 1"
+            ).fetchone()
+            if row:
+                _run_ical_sync(json.loads(row["credentials"])["url"], "http://localhost:5001")
+        except Exception as e:
+            print(f"Canvas iCal loop error: {e}")
+    sched.every(15).minutes.do(job)
+    while True:
+        sched.run_pending()
+        _time.sleep(30)
+
+
+if __name__ == "__main__":
+    init_db()
+    threading.Thread(target=canvas_auto_loop, daemon=True).start()
+    port = int(os.getenv("PORT", 5001))
+    app.run(host="0.0.0.0", port=port, debug=False)

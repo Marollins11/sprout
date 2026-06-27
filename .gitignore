@@ -1,0 +1,8 @@
+config.py
+credentials.json
+token.json
+*.ppn
+__pycache__/
+*.db
+.DS_Store
+.vscode/

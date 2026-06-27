@@ -1,0 +1,1064 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Desk Assistant</title>
+  <style>
+    /* ── Theme variables ── */
+    :root {
+      --bg:           #0f1117;
+      --surface:      #1a1d2e;
+      --surface-low:  #13151f;
+      --surface-btn:  #252845;
+      --border:       #2d3154;
+      --border-sub:   #1e2133;
+      --text:         #e2e8f0;
+      --text-muted:   #94a3b8;
+      --text-faint:   #64748b;
+      --text-dim:     #374151;
+      --accent:       #4d5498;
+      --accent-hover: #5d64b8;
+      --today:        #818cf8;
+    }
+    body.light {
+      --bg:           #f8fafc;
+      --surface:      #ffffff;
+      --surface-low:  #f1f5f9;
+      --surface-btn:  #e2e8f0;
+      --border:       #cbd5e1;
+      --border-sub:   #e2e8f0;
+      --text:         #1e293b;
+      --text-muted:   #475569;
+      --text-faint:   #94a3b8;
+      --text-dim:     #cbd5e1;
+      --accent:       #4d5498;
+      --accent-hover: #5d64b8;
+      --today:        #6366f1;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+           background: var(--bg); color: var(--text); min-height: 100vh;
+           transition: background 0.2s, color 0.2s; }
+
+    /* Header */
+    header { background: var(--surface); padding: 0 24px; display: flex; align-items: center;
+             gap: 16px; border-bottom: 1px solid var(--border); height: 56px; flex-shrink: 0; }
+    header h1 { font-size: 15px; font-weight: 600; color: var(--accent); letter-spacing: 0.02em; }
+
+    /* Theme toggle — fixed top-right, always visible */
+    .theme-toggle { position: fixed; top: 12px; right: 16px; z-index: 999;
+                    background: var(--accent); border: none; color: #fff;
+                    border-radius: 20px; padding: 6px 16px; font-size: 13px;
+                    font-weight: 600; cursor: pointer; display: flex; align-items: center;
+                    gap: 6px; box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+                    transition: background 0.15s, transform 0.1s; white-space: nowrap; }
+    .theme-toggle:hover { background: var(--accent-hover); transform: scale(1.04); }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 4px; }
+    .tab { padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 13px;
+           color: var(--text-muted); border: none; background: none; transition: all 0.15s; }
+    .tab.active { background: var(--border); color: var(--text); }
+    .tab:hover:not(.active) { color: var(--text); }
+
+    /* ── KANBAN ── */
+    #kanban-view { display: flex; flex-direction: column; height: calc(100vh - 56px); }
+    #kanban-view.hidden { display: none; }
+
+    /* Filter bar */
+    .filter-bar { padding: 8px 24px; display: flex; gap: 6px; flex-wrap: wrap;
+                  align-items: center; background: var(--surface-low);
+                  border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .filter-pill { padding: 4px 12px; border-radius: 20px; font-size: 12px; cursor: pointer;
+                   border: 1px solid var(--border); background: none; color: var(--text-muted);
+                   transition: all 0.15s; }
+    .filter-pill:hover { border-color: var(--accent); color: var(--text); }
+    .filter-pill.active { color: #fff; border-color: transparent; }
+    .filter-pill[data-family="all"].active    { background: #374151; }
+    .filter-pill[data-family="work"].active   { background: #1F6FEB; }
+    .filter-pill[data-family="school"].active { background: #1A7F37; }
+    .filter-pill[data-family="personal"].active { background: #6B21A8; }
+    .filter-sep { color: var(--border); }
+    .add-task-btn { margin-left: auto; padding: 5px 14px; background: var(--accent);
+                    color: #fff; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; }
+    .add-task-btn:hover { background: var(--accent-hover); }
+
+    /* Kanban columns */
+    .kanban { display: flex; gap: 14px; padding: 14px 24px;
+              flex: 1; overflow-x: auto; overflow-y: hidden; }
+    .column { flex: 1; min-width: 260px; max-width: 400px; display: flex; flex-direction: column; }
+    .col-header { display: flex; align-items: center; justify-content: space-between;
+                  padding: 8px 10px 10px; font-size: 11px; font-weight: 700;
+                  letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); }
+    .col-count { background: var(--border); border-radius: 10px; padding: 2px 7px;
+                 font-size: 11px; color: var(--text-muted); }
+    .col-body { flex: 1; overflow-y: auto; display: flex; flex-direction: column;
+                gap: 8px; padding-bottom: 8px; }
+    .col-body::-webkit-scrollbar { width: 4px; }
+    .col-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    /* Cards */
+    .card { background: var(--surface); border-radius: 8px; padding: 10px 12px;
+            border: 1px solid var(--border-sub); cursor: pointer;
+            transition: border-color 0.15s, transform 0.1s, box-shadow 0.15s;
+            user-select: none; }
+    .card:hover { border-color: var(--accent); transform: translateY(-1px);
+                  box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+    .card.flagged { border-left: 3px solid #f59e0b; }
+    .card-title { font-size: 13px; line-height: 1.45; margin-bottom: 9px; color: var(--text); }
+    .card-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .card-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; color: #fff;
+                  max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                  flex-shrink: 0; }
+    .card-actions { display: flex; gap: 2px; flex-shrink: 0; }
+    .card-btn { background: none; border: none; cursor: pointer; font-size: 13px;
+                padding: 2px 5px; border-radius: 4px; opacity: 0.35; transition: opacity 0.15s; }
+    .card-btn:hover { opacity: 1; background: var(--border); }
+    .card-btn.on { opacity: 1; }
+    .card-hint { font-size: 10px; color: var(--text-dim); margin-top: 6px; }
+    .card-desc { font-size: 11px; color: var(--text-muted); margin: 4px 0 8px;
+                 line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2;
+                 -webkit-box-orient: vertical; overflow: hidden; }
+    .card-due  { font-size: 11px; color: var(--text-faint); white-space: nowrap; flex-shrink: 0; }
+    .col-body.drag-over { outline: 2px dashed var(--accent); border-radius: 8px; background: var(--surface-btn); }
+    .card.dragging { opacity: 0.35; }
+    /* Detail modal */
+    .detail-modal { background: var(--surface); border-radius: 12px; padding: 24px;
+                    width: 540px; max-width: 92vw; max-height: 82vh; overflow-y: auto;
+                    border: 1px solid var(--border); box-shadow: 0 16px 40px rgba(0,0,0,0.3); }
+    .detail-header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+    .detail-title { font-size: 15px; font-weight: 600; color: var(--text); line-height: 1.4;
+                    flex: 1; background: none; border: none; padding: 0; font-family: inherit;
+                    resize: none; outline: none; cursor: text; }
+    .detail-title:focus { outline: 1px solid var(--accent); border-radius: 4px; padding: 2px 4px; }
+    .detail-close { background: none; border: none; cursor: pointer; font-size: 18px;
+                    color: var(--text-faint); padding: 0 4px; line-height: 1; flex-shrink: 0; }
+    .detail-close:hover { color: var(--text); }
+    .detail-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    .detail-section { margin-bottom: 16px; }
+    .detail-label { font-size: 11px; color: var(--text-faint); text-transform: uppercase;
+                    letter-spacing: 0.06em; margin-bottom: 6px; }
+    .detail-desc { font-size: 13px; color: var(--text-muted); line-height: 1.6;
+                   white-space: pre-wrap; background: var(--bg); border-radius: 6px;
+                   padding: 10px 12px; border: 1px solid var(--border-sub);
+                   min-height: 48px; cursor: text; }
+    .detail-desc:empty::before { content: 'Click to add a description…'; color: var(--text-faint); }
+    .detail-desc-edit { display: none; width: 100%; min-height: 80px; font-size: 13px;
+                        color: var(--text); line-height: 1.6; background: var(--bg);
+                        border: 1px solid var(--accent); border-radius: 6px;
+                        padding: 10px 12px; resize: vertical; font-family: inherit; }
+    .detail-desc-edit:focus { outline: none; }
+    .status-btns { display: flex; gap: 6px; }
+    .status-btn  { padding: 5px 14px; border-radius: 6px; font-size: 12px; cursor: pointer;
+                   border: 1px solid var(--border); background: var(--surface-btn);
+                   color: var(--text-muted); transition: all 0.15s; }
+    .status-btn.active { background: var(--accent); color: #fff; border-color: transparent; }
+    .status-btn:hover:not(.active) { border-color: var(--accent); color: var(--text); }
+
+    /* Modal */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+                     z-index: 200; align-items: center; justify-content: center; }
+    .modal-overlay.show { display: flex; }
+    .modal { background: var(--surface); border-radius: 12px; padding: 24px; width: 380px;
+             border: 1px solid var(--border); box-shadow: 0 16px 40px rgba(0,0,0,0.3); }
+    .modal h3 { margin-bottom: 16px; font-size: 15px; color: var(--text); }
+    .form-row { margin-bottom: 10px; }
+    .form-row label { display: block; font-size: 11px; color: var(--text-faint);
+                      text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+    .modal input, .modal select { width: 100%; padding: 8px 10px; background: var(--bg);
+      border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; }
+    .modal input:focus, .modal select:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+    .modal-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+    .btn { padding: 7px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; border: none; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-secondary { background: var(--surface-btn); color: var(--text-muted); }
+    .btn-secondary:hover { background: var(--border); }
+
+    /* ── CALENDAR ── */
+    #cal-view { display: none; flex-direction: column; height: calc(100vh - 56px); }
+    #cal-view.show { display: flex; }
+
+    .cal-controls { display: flex; align-items: center; gap: 14px; padding: 8px 24px;
+                    background: var(--surface-low); border-bottom: 1px solid var(--border);
+                    flex-shrink: 0; flex-wrap: wrap; }
+    .cal-nav { display: flex; align-items: center; gap: 8px; }
+    .cal-nav button { padding: 4px 12px; border-radius: 6px; background: var(--surface-btn);
+                      color: var(--text); border: 1px solid var(--border); cursor: pointer; font-size: 15px; }
+    .cal-nav button:hover { border-color: var(--accent); }
+    .cal-week-label { font-size: 13px; font-weight: 500; min-width: 200px;
+                      text-align: center; color: var(--text); }
+    .source-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+    .source-pill { padding: 3px 10px; border-radius: 12px; font-size: 11px; cursor: pointer;
+                   border: 1px solid; font-weight: 500; transition: opacity 0.15s; }
+    .source-pill.off { opacity: 0.3; }
+
+    .cal-grid-wrapper { flex: 1; overflow: auto; }
+    .cal-grid { display: grid; grid-template-columns: 52px repeat(7, 1fr); min-width: 600px; }
+    .cal-corner { position: sticky; top: 0; background: var(--bg); z-index: 10;
+                  border-bottom: 1px solid var(--border); }
+    .cal-day-header { text-align: center; padding: 8px 4px; position: sticky; top: 0;
+                      background: var(--bg); z-index: 10; border-bottom: 1px solid var(--border); }
+    .cal-day-name { font-size: 11px; color: var(--text-faint); text-transform: uppercase;
+                    letter-spacing: 0.06em; }
+    .cal-day-num { font-size: 18px; font-weight: 600; margin-top: 2px; color: var(--text); }
+    .cal-day-num.today { color: var(--today); }
+    .time-label { font-size: 11px; color: var(--text-dim); padding: 0 6px; text-align: right;
+                  height: 52px; display: flex; align-items: flex-start;
+                  padding-top: 4px; border-right: 1px solid var(--border-sub); }
+    .cal-cell { border-right: 1px solid var(--border-sub); border-bottom: 1px solid var(--border-sub);
+                height: 52px; position: relative; padding: 2px 3px; overflow: hidden; }
+    .cal-cell:last-child { border-right: none; }
+    .cal-event { border-radius: 3px; padding: 2px 5px; font-size: 10px; overflow: hidden;
+                 white-space: nowrap; text-overflow: ellipsis; color: #fff;
+                 margin-bottom: 1px; line-height: 1.3; }
+    .cal-event:hover { filter: brightness(1.15); }
+    .cal-loading { display: flex; align-items: center; justify-content: center;
+                   height: 200px; color: var(--text-faint); font-size: 14px; }
+
+    /* ── VOICE BUTTON ── */
+    #voice-controls { position: fixed; bottom: 24px; right: 24px; z-index: 300;
+                      display: flex; flex-direction: column; align-items: center; gap: 8px; }
+    #voice-btn { width: 56px; height: 56px; border-radius: 50%; background: var(--accent);
+                 border: none; cursor: pointer; font-size: 22px; color: #fff;
+                 box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+                 transition: background 0.15s, transform 0.1s; }
+    #voice-btn:hover:not(:disabled) { background: var(--accent-hover); transform: scale(1.06); }
+    #voice-btn.listening { background: #ef4444; animation: vpulse 1.2s infinite; }
+    @keyframes vpulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.45); }
+      50%      { box-shadow: 0 0 0 12px rgba(239,68,68,0); }
+    }
+    #voice-status { font-size: 11px; color: var(--text-muted); max-width: 180px;
+                    text-align: center; background: var(--surface); padding: 4px 10px;
+                    border-radius: 12px; border: 1px solid var(--border); line-height: 1.4;
+                    display: none; }
+    #voice-status:not(:empty) { display: block; }
+
+    /* ── ACCOUNTS ── */
+    #accounts-view { display: none; padding: 32px 24px; overflow-y: auto;
+                     height: calc(100vh - 56px); }
+    #accounts-view.show { display: block; }
+    .accounts-section { max-width: 520px; margin-bottom: 36px; }
+    .accounts-section h2 { font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
+                           text-transform: uppercase; color: var(--text-faint);
+                           margin-bottom: 14px; }
+    .account-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+                    background: var(--surface); border: 1px solid var(--border);
+                    border-radius: 8px; margin-bottom: 8px; }
+    .account-badge { width: 28px; height: 28px; border-radius: 6px; display: flex;
+                     align-items: center; justify-content: center; font-size: 11px;
+                     font-weight: 700; color: #fff; flex-shrink: 0; }
+    .account-badge.google  { background: #EA4335; }
+    .account-badge.outlook { background: #0078D4; }
+    .account-badge.icloud  { background: #7C3AED; }
+    .account-label { flex: 1; font-size: 13px; color: var(--text); }
+    .account-remove { background: none; border: none; cursor: pointer; font-size: 12px;
+                      color: var(--text-faint); padding: 4px 8px; border-radius: 4px;
+                      transition: color 0.15s, background 0.15s; }
+    .account-remove:hover { color: #f87171; background: var(--surface-btn); }
+    .accounts-empty { font-size: 13px; color: var(--text-faint); padding: 8px 0; }
+    .connect-btn { display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+                   border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer;
+                   border: 1px solid var(--border); background: var(--surface);
+                   color: var(--text); text-decoration: none; margin-bottom: 8px;
+                   transition: border-color 0.15s, background 0.15s; width: fit-content; }
+    .connect-btn:hover { border-color: var(--accent); background: var(--surface-btn); }
+    .connect-btn .cbadge { width: 20px; height: 20px; border-radius: 4px; flex-shrink: 0;
+                           display: flex; align-items: center; justify-content: center;
+                           font-size: 10px; font-weight: 700; color: #fff; }
+    .icloud-form { margin-top: 4px; padding: 14px; background: var(--surface);
+                   border: 1px solid var(--border); border-radius: 8px; max-width: 360px; }
+    .icloud-form label { font-size: 11px; color: var(--text-faint); text-transform: uppercase;
+                         letter-spacing: 0.06em; display: block; margin-bottom: 4px; margin-top: 10px; }
+    .icloud-form label:first-child { margin-top: 0; }
+    .icloud-form input { width: 100%; padding: 7px 10px; background: var(--bg);
+                         border: 1px solid var(--border); border-radius: 6px;
+                         color: var(--text); font-size: 13px; }
+    .icloud-form input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+    .icloud-hint { font-size: 11px; color: var(--text-faint); margin-top: 6px; }
+    .icloud-form-btns { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+    #icloud-status { font-size: 12px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>&#128444; Desk Assistant</h1>
+  <div class="tabs">
+    <button class="tab active" id="tab-kanban" onclick="showTab('kanban')">Kanban Board</button>
+    <button class="tab" id="tab-calendar" onclick="showTab('calendar')">Calendar</button>
+    <button class="tab" id="tab-accounts" onclick="showTab('accounts')">Accounts</button>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Switch theme">
+    <span id="theme-icon">☀</span>
+    <span id="theme-label">Light</span>
+  </button>
+</header>
+
+<!-- ── KANBAN VIEW ── -->
+<div id="kanban-view">
+  <div class="filter-bar">
+    <button class="filter-pill active" data-family="all"      onclick="setFamilyFilter('all')">All</button>
+    <button class="filter-pill"        data-family="work"     onclick="setFamilyFilter('work')">Work</button>
+    <button class="filter-pill"        data-family="school"   onclick="setFamilyFilter('school')">School</button>
+    <button class="filter-pill"        data-family="personal" onclick="setFamilyFilter('personal')">Personal</button>
+    <span class="filter-sep">|</span>
+    <div id="project-filters" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+    <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+      <button class="filter-pill" id="sort-btn" onclick="toggleDueSort()">Due ↑</button>
+      <button class="add-task-btn" style="margin-left:0" onclick="openModal()">+ Add Task</button>
+    </div>
+  </div>
+
+  <div class="kanban">
+    <div class="column">
+      <div class="col-header">To Do <span class="col-count" id="count-todo">0</span></div>
+      <div class="col-body" id="col-todo"
+           ondragover="colDragOver(event)" ondragleave="colDragLeave(event)" ondrop="colDrop(event,'todo')"></div>
+    </div>
+    <div class="column">
+      <div class="col-header">In Progress <span class="col-count" id="count-inprog">0</span></div>
+      <div class="col-body" id="col-inprog"
+           ondragover="colDragOver(event)" ondragleave="colDragLeave(event)" ondrop="colDrop(event,'in_progress')"></div>
+    </div>
+    <div class="column">
+      <div class="col-header">Done <span class="col-count" id="count-done">0</span></div>
+      <div class="col-body" id="col-done"
+           ondragover="colDragOver(event)" ondragleave="colDragLeave(event)" ondrop="colDrop(event,'done')"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── CALENDAR VIEW ── -->
+<div id="cal-view">
+  <div class="cal-controls">
+    <div class="cal-nav">
+      <button onclick="calNav(-1)">&#8249;</button>
+      <span class="cal-week-label" id="cal-week-label"></span>
+      <button onclick="calNav(1)">&#8250;</button>
+    </div>
+    <div class="source-pills" id="source-pills"></div>
+  </div>
+  <div class="cal-grid-wrapper">
+    <div class="cal-grid" id="cal-grid">
+      <div class="cal-loading" style="grid-column:1/-1">Loading calendar&hellip;</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── ACCOUNTS VIEW ── -->
+<div id="accounts-view">
+  <div class="accounts-section">
+    <h2>Connected Calendars</h2>
+    <div id="accounts-list"><div class="accounts-empty">Loading&hellip;</div></div>
+  </div>
+
+  <div class="accounts-section">
+    <h2>Canvas</h2>
+    <div class="icloud-form" style="border-color:#1A7F37">
+      <label style="color:#4ade80">Calendar Feed URL</label>
+      <p id="canvas-feed-status" class="icloud-hint" style="margin-top:0;margin-bottom:8px">Loading&hellip;</p>
+      <input type="url" id="canvas-feed-url" placeholder="https://yourschool.instructure.com/feeds/calendars/user_XXXX.ics" />
+      <p class="icloud-hint">In Canvas: Calendar &rarr; <strong>Calendar Feed</strong> link (bottom-left) &rarr; copy URL</p>
+      <div class="icloud-form-btns">
+        <button class="btn btn-primary" style="background:#1A7F37" onclick="saveCanvasFeed()">Save Feed</button>
+        <button class="btn btn-secondary" onclick="syncCanvasFeed()">Sync Now</button>
+        <button class="btn btn-secondary" onclick="removeCanvasFeed()" style="color:#f87171">Remove</button>
+        <span id="canvas-feed-msg" style="font-size:12px"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="accounts-section">
+    <h2>Add Calendar</h2>
+    <a href="/api/calendar/auth/google/start" class="connect-btn">
+      <span class="cbadge" style="background:#EA4335">G</span> Connect Google Calendar
+    </a>
+    <a href="/api/calendar/auth/outlook/start" class="connect-btn">
+      <span class="cbadge" style="background:#0078D4">O</span> Connect Outlook
+    </a>
+
+    <div class="icloud-form" style="margin-top:16px">
+      <label>Apple ID</label>
+      <input type="email" id="icloud-user" placeholder="you@icloud.com" autocomplete="off" />
+      <label>App-Specific Password</label>
+      <input type="password" id="icloud-pass" placeholder="xxxx-xxxx-xxxx-xxxx" />
+      <p class="icloud-hint">
+        Generate at <strong>appleid.apple.com</strong> &rarr; Security &rarr; App-Specific Passwords
+      </p>
+      <div class="icloud-form-btns">
+        <button class="btn btn-primary" onclick="connectICloud()">Connect iCloud</button>
+        <span id="icloud-status"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── ADD TASK MODAL ── -->
+<div class="modal-overlay" id="modal" onclick="handleModalClick(event)">
+  <div class="modal">
+    <h3>Add Task</h3>
+    <div class="form-row">
+      <label>Title</label>
+      <input type="text" id="task-title" placeholder="What needs to be done?" />
+    </div>
+    <div class="form-row">
+      <label>Family</label>
+      <select id="task-family">
+        <option value="personal">Personal</option>
+        <option value="work">Work</option>
+        <option value="school">School</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>Sub-project</label>
+      <input type="text" id="task-project" placeholder="e.g. Q3 Review, Bio 101, Health" />
+    </div>
+    <div class="form-row">
+      <label>Description</label>
+      <textarea id="task-desc" placeholder="Optional details…"
+        style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);
+        border-radius:6px;color:var(--text);font-size:13px;resize:vertical;min-height:60px;
+        font-family:inherit"></textarea>
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitTask()">Add Task</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── Theme ──
+  function applyTheme(dark) {
+    document.body.classList.toggle('light', !dark);
+    document.getElementById('theme-icon').textContent  = dark ? '☀' : '☽';
+    document.getElementById('theme-label').textContent = dark ? 'Light mode' : 'Dark mode';
+  }
+
+  function toggleTheme() {
+    const isDark = !document.body.classList.contains('light');
+    const newDark = !isDark;
+    localStorage.setItem('desk-theme', newDark ? 'dark' : 'light');
+    applyTheme(newDark);
+  }
+
+  // Apply saved theme immediately (before paint)
+  (function () {
+    const saved = localStorage.getItem('desk-theme');
+    // Default: dark. Apply light only if explicitly saved.
+    applyTheme(saved !== 'light');
+  })();
+
+  // ── State ──
+  let allTasks = [];
+  let familyFilter = 'all';
+  let subFilter = null;
+  let calOffset = 0;
+  let calEvents = [];
+  let calLoaded = false;
+  let dragId = null;
+  let currentCardId = null;
+  let dueSortAsc = true;
+  const sourcesEnabled = {};
+  const SOURCE_COLORS = {
+    Google: '#2563EB', Outlook: '#0078D4', iCloud: '#6B21A8', Canvas: '#1A7F37'
+  };
+  const STATUS_CYCLE = { todo: 'in_progress', in_progress: 'done', done: 'todo' };
+  const STATUS_LABEL = { todo: 'To Do', in_progress: 'In Progress', done: 'Done' };
+
+  function toggleDueSort() {
+    dueSortAsc = !dueSortAsc;
+    document.getElementById('sort-btn').textContent = dueSortAsc ? 'Due ↑' : 'Due ↓';
+    renderBoard();
+  }
+
+  function formatDue(iso) {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    } catch { return ''; }
+  }
+
+  // ── Tab switching ──
+  function showTab(tab) {
+    ['kanban', 'calendar', 'accounts'].forEach(t => {
+      document.getElementById(`tab-${t}`).classList.toggle('active', t === tab);
+    });
+    document.getElementById('kanban-view').classList.toggle('hidden', tab !== 'kanban');
+    document.getElementById('cal-view').classList.toggle('show', tab === 'calendar');
+    document.getElementById('accounts-view').classList.toggle('show', tab === 'accounts');
+    if (tab === 'calendar') loadCalendar();
+    if (tab === 'accounts') loadAccounts();
+  }
+
+  // ── Kanban ──
+  async function loadTasks() {
+    try {
+      const r = await fetch('/api/tasks');
+      allTasks = await r.json();
+      renderBoard();
+      renderProjectFilters();
+    } catch (e) {
+      console.warn('Could not load tasks:', e);
+    }
+  }
+
+  function renderBoard() {
+    const cols = { todo: [], in_progress: [], done: [] };
+    allTasks.forEach(t => {
+      if (familyFilter !== 'all' && t.family !== familyFilter) return;
+      if (subFilter && t.project !== subFilter) return;
+      if (cols[t.status] !== undefined) cols[t.status].push(t);
+    });
+    Object.values(cols).forEach(arr => arr.sort((a, b) => {
+      if (!a.due_date && !b.due_date) return 0;
+      if (!a.due_date) return 1;
+      if (!b.due_date) return -1;
+      const diff = new Date(a.due_date) - new Date(b.due_date);
+      return dueSortAsc ? diff : -diff;
+    }));
+
+    const map = {
+      todo:        ['col-todo',   'count-todo'],
+      in_progress: ['col-inprog', 'count-inprog'],
+      done:        ['col-done',   'count-done']
+    };
+    Object.entries(map).forEach(([status, [colId, cntId]]) => {
+      document.getElementById(cntId).textContent = cols[status].length;
+      document.getElementById(colId).innerHTML = cols[status].map(cardHTML).join('');
+    });
+  }
+
+  function cardHTML(t) {
+    const nextStatus = STATUS_CYCLE[t.status] || 'todo';
+    const nextLabel  = STATUS_LABEL[nextStatus];
+    const dueStr     = formatDue(t.due_date);
+    return `<div class="card ${t.flagged ? 'flagged' : ''}"
+      draggable="true"
+      ondragstart="cardDragStart(event,${t.id})"
+      ondragend="cardDragEnd(event)"
+      onclick="openCard(${t.id})">
+      <div class="card-title">${esc(t.title)}</div>
+      ${t.description ? `<div class="card-desc">${esc(t.description)}</div>` : ''}
+      <div class="card-meta">
+        <span class="card-badge" style="background:${esc(t.color)}">${esc(t.project)}</span>
+        ${dueStr ? `<span class="card-due">${dueStr}</span>` : ''}
+        <div class="card-actions" onclick="event.stopPropagation()">
+          <button class="card-btn ${t.flagged ? 'on' : ''}" title="${t.flagged ? 'Remove flag' : 'Flag'}"
+            onclick="toggleFlag(${t.id}, ${t.flagged})">&#x1F6A9;</button>
+          <button class="card-btn" title="Delete" onclick="deleteCard(${t.id})">&#x1F5D1;</button>
+          <button class="card-btn" title="Move to ${nextLabel}"
+            onclick="advanceCard(${t.id},'${nextStatus}')">&#8250;</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // ── Drag and drop ──
+  function cardDragStart(e, id) {
+    dragId = id;
+    e.dataTransfer.effectAllowed = 'move';
+    setTimeout(() => e.target.classList.add('dragging'), 0);
+  }
+
+  function cardDragEnd(e) {
+    e.target.classList.remove('dragging');
+  }
+
+  function colDragOver(e) {
+    e.preventDefault();
+    e.currentTarget.classList.add('drag-over');
+  }
+
+  function colDragLeave(e) {
+    e.currentTarget.classList.remove('drag-over');
+  }
+
+  async function colDrop(e, status) {
+    e.preventDefault();
+    e.currentTarget.classList.remove('drag-over');
+    if (dragId === null) return;
+    await fetch(`/api/tasks/${dragId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status })
+    });
+    dragId = null;
+    loadTasks();
+  }
+
+  // ── Card detail modal ──
+  function openCard(id) {
+    const t = allTasks.find(t => t.id === id);
+    if (!t) return;
+    currentCardId = id;
+    document.getElementById('detail-title').value = t.title;
+    const badge = document.getElementById('detail-badge');
+    badge.textContent = t.project;
+    badge.style.background = t.color;
+    document.getElementById('detail-due').textContent = t.due_date ? formatDue(t.due_date) : '';
+    const descEl = document.getElementById('detail-desc');
+    descEl.textContent = t.description || '';
+    document.getElementById('detail-desc-edit').value = t.description || '';
+    descEl.style.display = '';
+    document.getElementById('detail-desc-edit').style.display = 'none';
+    document.querySelectorAll('.status-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.status === t.status));
+    const flagBtn = document.getElementById('detail-flag-btn');
+    flagBtn.classList.toggle('on', !!t.flagged);
+    flagBtn.innerHTML = t.flagged ? '&#x1F6A9; Flagged' : '&#x1F6A9; Flag';
+    document.getElementById('card-modal').classList.add('show');
+  }
+
+  function closeCard() {
+    document.getElementById('card-modal').classList.remove('show');
+    currentCardId = null;
+  }
+
+  function handleCardModalClick(e) {
+    if (e.target === document.getElementById('card-modal')) closeCard();
+  }
+
+  async function saveDetailTitle() {
+    if (!currentCardId) return;
+    const title = document.getElementById('detail-title').value.trim();
+    if (!title) return;
+    await fetch(`/api/tasks/${currentCardId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title })
+    });
+    loadTasks();
+  }
+
+  function startDescEdit() {
+    document.getElementById('detail-desc').style.display = 'none';
+    const edit = document.getElementById('detail-desc-edit');
+    edit.style.display = 'block';
+    edit.focus();
+  }
+
+  async function saveDetailDesc() {
+    if (!currentCardId) return;
+    const desc = document.getElementById('detail-desc-edit').value;
+    await fetch(`/api/tasks/${currentCardId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description: desc })
+    });
+    const descEl = document.getElementById('detail-desc');
+    descEl.textContent = desc;
+    descEl.style.display = '';
+    document.getElementById('detail-desc-edit').style.display = 'none';
+    loadTasks();
+  }
+
+  async function setDetailStatus(status) {
+    if (!currentCardId) return;
+    await fetch(`/api/tasks/${currentCardId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status })
+    });
+    document.querySelectorAll('.status-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.status === status));
+    loadTasks();
+  }
+
+  async function toggleDetailFlag() {
+    if (!currentCardId) return;
+    const t = allTasks.find(t => t.id === currentCardId);
+    if (!t) return;
+    const flagged = t.flagged ? 0 : 1;
+    await fetch(`/api/tasks/${currentCardId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flagged })
+    });
+    const btn = document.getElementById('detail-flag-btn');
+    btn.innerHTML = flagged ? '&#x1F6A9; Flagged' : '&#x1F6A9; Flag';
+    btn.classList.toggle('on', !!flagged);
+    loadTasks();
+  }
+
+  async function deleteDetailCard() {
+    if (!currentCardId || !confirm('Delete this task?')) return;
+    await fetch(`/api/tasks/${currentCardId}`, { method: 'DELETE' });
+    closeCard();
+    loadTasks();
+  }
+
+  async function advanceCard(id, status) {
+    await fetch(`/api/tasks/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status })
+    });
+    loadTasks();
+  }
+
+  async function toggleFlag(id, current) {
+    await fetch(`/api/tasks/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flagged: current ? 0 : 1 })
+    });
+    loadTasks();
+  }
+
+  async function deleteCard(id) {
+    if (!confirm('Delete this task?')) return;
+    await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+    loadTasks();
+  }
+
+  function renderProjectFilters() {
+    const projects = [...new Set(allTasks.map(t => t.project))].sort();
+    document.getElementById('project-filters').innerHTML = projects.map(p => {
+      const task = allTasks.find(t => t.project === p);
+      const color = task ? task.color : '#555';
+      const active = subFilter === p;
+      return `<button class="filter-pill ${active ? 'active' : ''}"
+        style="${active ? `background:${color};border-color:${color};color:#fff` : ''}"
+        onclick="setSubFilter('${esc(p)}')">${esc(p)}</button>`;
+    }).join('');
+  }
+
+  function setFamilyFilter(fam) {
+    familyFilter = fam;
+    subFilter = null;
+    document.querySelectorAll('.filter-pill[data-family]').forEach(b =>
+      b.classList.toggle('active', b.dataset.family === fam));
+    renderBoard();
+    renderProjectFilters();
+  }
+
+  function setSubFilter(p) {
+    subFilter = (subFilter === p) ? null : p;
+    renderBoard();
+    renderProjectFilters();
+  }
+
+  // ── Modal ──
+  function openModal() {
+    document.getElementById('task-title').value = '';
+    document.getElementById('task-project').value = '';
+    document.getElementById('task-family').value = 'personal';
+    document.getElementById('task-desc').value = '';
+    document.getElementById('modal').classList.add('show');
+    setTimeout(() => document.getElementById('task-title').focus(), 50);
+  }
+
+  function closeModal() {
+    document.getElementById('modal').classList.remove('show');
+  }
+
+  function handleModalClick(e) {
+    if (e.target === document.getElementById('modal')) closeModal();
+  }
+
+  async function submitTask() {
+    const title = document.getElementById('task-title').value.trim();
+    if (!title) { document.getElementById('task-title').focus(); return; }
+    const family      = document.getElementById('task-family').value;
+    const project     = document.getElementById('task-project').value.trim() || family;
+    const description = document.getElementById('task-desc').value.trim() || null;
+    await fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, family, project, description })
+    });
+    closeModal();
+    loadTasks();
+  }
+
+  // ── Calendar ──
+  const HOURS    = Array.from({ length: 14 }, (_, i) => i + 7); // 7am–8pm
+  const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  function weekStart(offset) {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - d.getDay() + offset * 7);
+    return d;
+  }
+
+  function calNav(dir) {
+    calOffset += dir;
+    renderCalGrid();
+  }
+
+  async function loadCalendar() {
+    if (!calLoaded) {
+      document.getElementById('cal-grid').innerHTML =
+        '<div class="cal-loading" style="grid-column:1/-1">Loading events&hellip;</div>';
+    }
+    try {
+      const r = await fetch('/api/events');
+      calEvents = await r.json();
+      calEvents.forEach(e => {
+        if (e.source && sourcesEnabled[e.source] === undefined)
+          sourcesEnabled[e.source] = true;
+      });
+      calLoaded = true;
+    } catch (err) {
+      calEvents = [];
+    }
+    renderCalGrid();
+  }
+
+  function renderCalGrid() {
+    const start = weekStart(calOffset);
+    const endDay = new Date(start);
+    endDay.setDate(endDay.getDate() + 6);
+    const fmt = { month: 'short', day: 'numeric' };
+    document.getElementById('cal-week-label').textContent =
+      `${start.toLocaleDateString('en-US', fmt)} – ${endDay.toLocaleDateString('en-US', fmt)}`;
+
+    const sources = [...new Set(calEvents.map(e => e.source).filter(Boolean))];
+    document.getElementById('source-pills').innerHTML = sources.map(s => {
+      const color = SOURCE_COLORS[s] || '#555';
+      return `<button class="source-pill ${sourcesEnabled[s] ? '' : 'off'}"
+        style="color:${color};border-color:${color}"
+        onclick="toggleSource('${s}')">${s}</button>`;
+    }).join('');
+
+    const grid = document.getElementById('cal-grid');
+    grid.innerHTML = '';
+
+    // Corner + day headers
+    grid.appendChild(Object.assign(document.createElement('div'), { className: 'cal-corner' }));
+    for (let d = 0; d < 7; d++) {
+      const date = new Date(start);
+      date.setDate(date.getDate() + d);
+      const isToday = date.toDateString() === new Date().toDateString();
+      const hdr = document.createElement('div');
+      hdr.className = 'cal-day-header';
+      hdr.innerHTML = `<div class="cal-day-name">${DAY_NAMES[date.getDay()]}</div>
+        <div class="cal-day-num ${isToday ? 'today' : ''}">${date.getDate()}</div>`;
+      grid.appendChild(hdr);
+    }
+
+    // Hour rows
+    HOURS.forEach(h => {
+      const label = document.createElement('div');
+      label.className = 'time-label';
+      label.textContent = h === 12 ? '12pm' : h < 12 ? `${h}am` : `${h - 12}pm`;
+      grid.appendChild(label);
+
+      for (let d = 0; d < 7; d++) {
+        const date = new Date(start);
+        date.setDate(date.getDate() + d);
+        const dayStr = date.toISOString().slice(0, 10);
+
+        const cell = document.createElement('div');
+        cell.className = 'cal-cell';
+
+        calEvents.filter(e => {
+          if (!sourcesEnabled[e.source]) return false;
+          try {
+            const ev = new Date(e.start);
+            return ev.toISOString().slice(0, 10) === dayStr && ev.getHours() === h;
+          } catch { return false; }
+        }).forEach(e => {
+          const ev = document.createElement('div');
+          ev.className = 'cal-event';
+          ev.style.background = e.color || SOURCE_COLORS[e.source] || '#374151';
+          ev.title = e.title;
+          ev.textContent = e.title;
+          cell.appendChild(ev);
+        });
+
+        grid.appendChild(cell);
+      }
+    });
+  }
+
+  function toggleSource(s) {
+    sourcesEnabled[s] = !sourcesEnabled[s];
+    renderCalGrid();
+  }
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // ── Accounts ──
+  const TYPE_LABEL = { google: 'G', outlook: 'O', icloud: 'iC', canvas_ical: 'C' };
+  const TYPE_COLOR = { google: '#EA4335', outlook: '#0078D4', icloud: '#7C3AED', canvas_ical: '#1A7F37' };
+
+  async function loadAccounts() {
+    const r = await fetch('/api/calendar/accounts');
+    const accounts = await r.json();
+    const el = document.getElementById('accounts-list');
+    const visible = accounts.filter(a => a.type !== 'canvas_ical');
+    if (!visible.length) {
+      el.innerHTML = '<div class="accounts-empty">No calendars connected yet.</div>';
+    } else {
+      el.innerHTML = visible.map(a => `
+        <div class="account-item">
+          <span class="account-badge ${a.type}" style="background:${TYPE_COLOR[a.type] || '#555'}">
+            ${TYPE_LABEL[a.type] || '?'}
+          </span>
+          <span class="account-label">${esc(a.label)}</span>
+          <button class="account-remove" onclick="removeAccount(${a.id})">Remove</button>
+        </div>`).join('');
+    }
+    loadCanvasFeed();
+  }
+
+  async function loadCanvasFeed() {
+    try {
+      const r = await fetch('/api/canvas/ical');
+      const d = await r.json();
+      const status = document.getElementById('canvas-feed-status');
+      const input  = document.getElementById('canvas-feed-url');
+      if (d.url) {
+        status.textContent = `Feed saved: ${d.url}`;
+        input.value = d.url;
+      } else {
+        status.textContent = 'No Canvas feed configured.';
+        input.value = '';
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  async function saveCanvasFeed() {
+    const url = document.getElementById('canvas-feed-url').value.trim();
+    const msg  = document.getElementById('canvas-feed-msg');
+    if (!url) { msg.style.color = '#f87171'; msg.textContent = 'Paste the feed URL first.'; return; }
+    msg.style.color = 'var(--text-faint)'; msg.textContent = 'Saving…';
+    const r = await fetch('/api/canvas/ical', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      msg.style.color = '#4ade80'; msg.textContent = 'Saved!';
+      loadCanvasFeed();
+    } else {
+      msg.style.color = '#f87171'; msg.textContent = d.error || 'Error saving.';
+    }
+  }
+
+  async function syncCanvasFeed() {
+    const msg = document.getElementById('canvas-feed-msg');
+    msg.style.color = 'var(--text-faint)'; msg.textContent = 'Syncing…';
+    const r = await fetch('/api/canvas/ical/sync', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      msg.style.color = '#4ade80'; msg.textContent = 'Synced! Check your board.';
+      setTimeout(loadTasks, 2000);
+    } else {
+      msg.style.color = '#f87171'; msg.textContent = d.error || 'Sync failed.';
+    }
+  }
+
+  async function removeCanvasFeed() {
+    if (!confirm('Remove Canvas calendar feed?')) return;
+    await fetch('/api/canvas/ical', { method: 'DELETE' });
+    loadCanvasFeed();
+  }
+
+  async function removeAccount(id) {
+    if (!confirm('Remove this calendar account?')) return;
+    await fetch(`/api/calendar/accounts/${id}`, { method: 'DELETE' });
+    loadAccounts();
+  }
+
+  async function connectICloud() {
+    const username = document.getElementById('icloud-user').value.trim();
+    const password = document.getElementById('icloud-pass').value.trim();
+    const status   = document.getElementById('icloud-status');
+    if (!username || !password) { status.style.color = '#f87171'; status.textContent = 'Both fields required.'; return; }
+    status.style.color = 'var(--text-faint)'; status.textContent = 'Connecting…';
+    const r = await fetch('/api/calendar/auth/icloud', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      status.style.color = '#4ade80'; status.textContent = 'Connected!';
+      document.getElementById('icloud-user').value = '';
+      document.getElementById('icloud-pass').value = '';
+      loadAccounts();
+    } else {
+      status.style.color = '#f87171'; status.textContent = d.error || 'Connection failed.';
+    }
+  }
+
+  // ── Init ──
+  loadTasks();
+  setInterval(loadTasks, 10000);
+
+  // Auto-switch to Accounts tab after OAuth redirect
+  (function () {
+    const p = new URLSearchParams(window.location.search);
+    if (p.get('accounts') === '1') {
+      showTab('accounts');
+      window.history.replaceState({}, '', '/');
+    }
+  })();
+  setInterval(() => {
+    if (document.getElementById('cal-view').classList.contains('show')) loadCalendar();
+  }, 300000);
+
+  document.getElementById('task-title').addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitTask();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { closeModal(); closeCard(); }
+  });
+</script>
+
+<!-- ── VOICE BUTTON ── -->
+<!-- ── CARD DETAIL MODAL ── -->
+<div class="modal-overlay" id="card-modal" onclick="handleCardModalClick(event)">
+  <div class="detail-modal">
+    <div class="detail-header">
+      <textarea class="detail-title" id="detail-title" rows="2"
+        onblur="saveDetailTitle()" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"></textarea>
+      <button class="detail-close" onclick="closeCard()">&#x2715;</button>
+    </div>
+    <div class="detail-meta">
+      <span class="card-badge" id="detail-badge"></span>
+      <span class="card-due" id="detail-due" style="font-size:12px;color:var(--text-muted)"></span>
+    </div>
+    <div class="detail-section">
+      <div class="detail-label">Status</div>
+      <div class="status-btns">
+        <button class="status-btn" data-status="todo"        onclick="setDetailStatus('todo')">To Do</button>
+        <button class="status-btn" data-status="in_progress" onclick="setDetailStatus('in_progress')">In Progress</button>
+        <button class="status-btn" data-status="done"        onclick="setDetailStatus('done')">Done</button>
+      </div>
+    </div>
+    <div class="detail-section">
+      <div class="detail-label">Description <span style="font-size:10px;color:var(--text-faint);text-transform:none;letter-spacing:0">(click to edit)</span></div>
+      <div id="detail-desc" class="detail-desc" onclick="startDescEdit()"></div>
+      <textarea id="detail-desc-edit" class="detail-desc-edit"
+        placeholder="Add a description…"
+        onblur="saveDetailDesc()"></textarea>
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-secondary" id="detail-flag-btn" onclick="toggleDetailFlag()">&#x1F6A9; Flag</button>
+      <button class="btn btn-secondary" onclick="deleteDetailCard()" style="color:#f87171">Delete</button>
+      <button class="btn btn-secondary" style="margin-left:auto" onclick="closeCard()">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="voice-controls">
+  <div id="voice-status"></div>
+  <button id="voice-btn" title="Click to speak (or press Space)">🎤</button>
+</div>
+<script src="/static/assistant_browser.js"></script>
+</body>
+</html>

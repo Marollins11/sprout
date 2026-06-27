@@ -1,0 +1,10 @@
+google-genai
+flask
+caldav
+requests
+schedule
+google-api-python-client
+google-auth-oauthlib
+O365
+gunicorn
+icalendar
