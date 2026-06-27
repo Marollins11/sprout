@@ -381,6 +381,11 @@
     </div>
   </div>
 
+  <div class="accounts-section" id="mappings-section" style="display:none">
+    <h2>Course Mappings</h2>
+    <div id="mappings-list"></div>
+  </div>
+
   <div class="accounts-section">
     <h2>Add Calendar</h2>
     <a href="/api/calendar/auth/google/start" class="connect-btn">
@@ -928,7 +933,7 @@
           <button class="account-remove" onclick="removeAccount(${a.id})">Remove</button>
         </div>`).join('');
     }
-    loadCanvasFeed();
+    loadCanvasFeed();  // loadCanvasFeed calls loadMappings internally
   }
 
   async function loadCanvasFeed() {
@@ -945,6 +950,36 @@
         input.value = '';
       }
     } catch (e) { /* ignore */ }
+    loadMappings();
+  }
+
+  async function loadMappings() {
+    try {
+      const r = await fetch('/api/canvas/courses');
+      const d = await r.json();
+      const section = document.getElementById('mappings-section');
+      const list    = document.getElementById('mappings-list');
+      if (!d.ok || !d.codes || d.codes.length === 0) {
+        section.style.display = 'none';
+        return;
+      }
+      section.style.display = '';
+      list.innerHTML = d.codes.map(code => {
+        const name = d.mappings[code] || '';
+        return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:13px">
+          <span style="flex:0 0 200px;color:var(--text-muted);font-size:11px;word-break:break-all">${esc(code)}</span>
+          <span style="flex:1;color:var(--text)">${esc(name) || '<em style="color:var(--text-faint)">unmapped</em>'}</span>
+          ${name ? `<button class="btn btn-secondary" style="padding:3px 10px;font-size:11px;color:#f87171"
+            onclick="deleteMapping('${esc(code)}')">Remove</button>` : ''}
+        </div>`;
+      }).join('');
+    } catch (e) { /* ignore */ }
+  }
+
+  async function deleteMapping(code) {
+    if (!confirm(`Remove mapping for "${code}"? It will show as the raw course code until you re-map it.`)) return;
+    await fetch('/api/canvas/course-mappings/' + encodeURIComponent(code), { method: 'DELETE' });
+    loadMappings();
   }
 
   async function saveCanvasFeed() {
@@ -1010,8 +1045,15 @@
     if (d.ok) {
       const n = d.added ?? 0;
       msg.style.color = '#4ade80';
-      msg.textContent = n > 0 ? `Synced! ${n} assignment${n === 1 ? '' : 's'} added.` : 'Synced! (no new assignments)';
+      if (n > 0) {
+        msg.textContent = `Synced! ${n} assignment${n === 1 ? '' : 's'} added.`;
+      } else if ((d.total ?? 0) === 0) {
+        msg.textContent = 'Synced! Feed returned no events — check your URL.';
+      } else {
+        msg.textContent = `Synced! ${d.total} events found, ${d.skipped_session} class sessions, ${d.skipped_dupe} already on board.`;
+      }
       loadTasks();
+      loadMappings();
     } else {
       msg.style.color = '#f87171'; msg.textContent = d.error || 'Sync failed.';
     }

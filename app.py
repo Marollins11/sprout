@@ -572,6 +572,15 @@ def save_course_mappings():
     return jsonify({"ok": True})
 
 
+@app.route("/api/canvas/course-mappings/<path:code>", methods=["DELETE"])
+def delete_course_mapping(code):
+    db = get_db()
+    db.execute("DELETE FROM course_mappings WHERE user_id=? AND course_code=?",
+               (current_user.id, code))
+    db.commit()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/canvas/ical/sync", methods=["POST"])
 def sync_canvas_ical_now():
     from ical_sync import fetch_ical_events
@@ -588,20 +597,18 @@ def sync_canvas_ical_now():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
-    now = datetime.now(timezone.utc)
     existing = {t["title"] for t in db.execute("SELECT title FROM tasks").fetchall()}
     SKIP_PATTERNS = ("class session", "class meeting", "lecture", "office hours")
     added = 0
+    skipped_session = 0
+    skipped_dupe = 0
     for e in events:
         title = e["title"]
         if any(title.lower().startswith(p) for p in SKIP_PATTERNS):
+            skipped_session += 1
             continue
-        try:
-            if datetime.fromisoformat(e["start"]) < now:
-                continue
-        except Exception:
-            pass
         if title in existing:
+            skipped_dupe += 1
             continue
         color = get_or_create_project(e["course"], "school")
         db.execute(
@@ -613,7 +620,10 @@ def sync_canvas_ical_now():
         existing.add(title)
         added += 1
     db.commit()
-    return jsonify({"ok": True, "added": added})
+    return jsonify({"ok": True, "added": added,
+                    "total": len(events),
+                    "skipped_session": skipped_session,
+                    "skipped_dupe": skipped_dupe})
 
 
 # ── Voice ─────────────────────────────────────────────────────────────────────
