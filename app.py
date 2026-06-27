@@ -247,7 +247,24 @@ _PUBLIC = {'login', 'google_login_start', 'google_login_callback', 'static'}
 def require_login():
     if request.endpoint in _PUBLIC or current_user.is_authenticated:
         return
+    # Return JSON for API routes so fetch() doesn't receive an HTML redirect
+    if request.path.startswith('/api/'):
+        return jsonify({"ok": False, "error": "Not authenticated"}), 401
     return redirect(url_for('login'))
+
+
+@app.errorhandler(500)
+def handle_500(e):
+    if request.path.startswith('/api/'):
+        return jsonify({"ok": False, "error": str(e)}), 500
+    return str(e), 500
+
+
+@app.errorhandler(404)
+def handle_404(e):
+    if request.path.startswith('/api/'):
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    return str(e), 404
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -537,12 +554,12 @@ def delete_canvas_ical():
 
 @app.route("/api/canvas/courses")
 def get_canvas_courses():
-    row = get_db().execute(
-        "SELECT url FROM canvas_feeds WHERE user_id=?", (current_user.id,)
-    ).fetchone()
-    if not row:
-        return jsonify({"ok": False, "error": "No Canvas feed configured"}), 400
     try:
+        row = get_db().execute(
+            "SELECT url FROM canvas_feeds WHERE user_id=?", (current_user.id,)
+        ).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "No Canvas feed configured"}), 400
         from ical_sync import detect_course_codes
         codes = detect_course_codes(row["url"])
         mappings = _get_user_mappings()

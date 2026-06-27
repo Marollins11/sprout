@@ -1006,7 +1006,13 @@
     msg.style.color = 'var(--text-faint)'; msg.textContent = 'Checking courses…';
     try {
       const r = await fetch('/api/canvas/courses');
-      const d = await r.json();
+      const text = await r.text();
+      let d;
+      try { d = JSON.parse(text); } catch {
+        msg.style.color = '#f87171';
+        msg.textContent = r.status === 401 ? 'Session expired — please refresh and log in again.' : `Server error (${r.status}) — check Railway logs.`;
+        return;
+      }
       if (!d.ok) { msg.style.color = '#f87171'; msg.textContent = d.error || 'Could not load courses.'; return; }
       document.getElementById('course-mapping-rows').innerHTML = d.codes.map(code => `
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
