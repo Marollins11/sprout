@@ -275,76 +275,87 @@ def logout():
     return redirect('/login')
 
 
+def _google_flow(redirect_uri):
+    from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+    from google_auth_oauthlib.flow import Flow
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+    return Flow.from_client_config(
+        {'web': {
+            'client_id': GOOGLE_CLIENT_ID,
+            'client_secret': GOOGLE_CLIENT_SECRET,
+            'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
+            'token_uri': 'https://oauth2.googleapis.com/token',
+            'redirect_uris': [redirect_uri],
+        }},
+        scopes=['openid',
+                'https://www.googleapis.com/auth/userinfo.email',
+                'https://www.googleapis.com/auth/userinfo.profile'],
+        redirect_uri=redirect_uri,
+    )
+
+
+def _callback_uri():
+    base = request.host_url.rstrip('/')
+    if base.startswith('http://') and not base.startswith('http://127') and not base.startswith('http://localhost'):
+        base = 'https://' + base[7:]
+    return base + '/auth/google/callback'
+
+
 @app.route('/auth/google/start')
 def google_login_start():
     from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
         flash('Google login is not configured.', 'error')
         return redirect('/login')
-    from google_auth_oauthlib.flow import Flow
-    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
-    flow = Flow.from_client_config(
-        {'web': {
-            'client_id': GOOGLE_CLIENT_ID,
-            'client_secret': GOOGLE_CLIENT_SECRET,
-            'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
-            'token_uri': 'https://oauth2.googleapis.com/token',
-        }},
-        scopes=['openid',
-                'https://www.googleapis.com/auth/userinfo.email',
-                'https://www.googleapis.com/auth/userinfo.profile'],
-        redirect_uri=request.host_url.rstrip('/') + '/auth/google/callback'
-    )
-    auth_url, state = flow.authorization_url(access_type='offline')
-    session['google_login_state'] = state
-    return redirect(auth_url)
+    try:
+        flow = _google_flow(_callback_uri())
+        auth_url, state = flow.authorization_url(access_type='offline')
+        session['google_login_state'] = state
+        return redirect(auth_url)
+    except Exception as e:
+        flash(f'Google login error: {e}', 'error')
+        return redirect('/login')
 
 
 @app.route('/auth/google/callback')
 def google_login_callback():
-    from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
-    from google_auth_oauthlib.flow import Flow
     import requests as req
-    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
-    flow = Flow.from_client_config(
-        {'web': {
-            'client_id': GOOGLE_CLIENT_ID,
-            'client_secret': GOOGLE_CLIENT_SECRET,
-            'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
-            'token_uri': 'https://oauth2.googleapis.com/token',
-        }},
-        scopes=['openid',
-                'https://www.googleapis.com/auth/userinfo.email',
-                'https://www.googleapis.com/auth/userinfo.profile'],
-        redirect_uri=request.host_url.rstrip('/') + '/auth/google/callback',
-        state=session.get('google_login_state')
-    )
-    flow.fetch_token(authorization_response=request.url)
-    creds = flow.credentials
-    info  = req.get(
-        f'https://www.googleapis.com/oauth2/v1/userinfo?access_token={creds.token}'
-    ).json()
-    email     = info.get('email', '')
-    name      = info.get('name', '')
-    google_id = info.get('id', '')
-    db  = get_db()
-    row = db.execute(
-        "SELECT * FROM users WHERE email=? OR google_id=?", (email, google_id)
-    ).fetchone()
-    if row:
-        db.execute("UPDATE users SET google_id=?,name=? WHERE id=?",
-                   (google_id, name, row['id']))
-        db.commit()
-        login_user(User(row['id'], row['email'], name))
-    else:
-        db.execute(
-            "INSERT INTO users (email,google_id,name,created_at) VALUES (?,?,?,?)",
-            (email, google_id, name, datetime.now().isoformat())
-        )
-        db.commit()
-        row = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-        login_user(User(row['id'], email, name))
-    return redirect('/')
+    try:
+        callback_uri = _callback_uri()
+        flow = _google_flow(callback_uri)
+        flow.state = session.get('google_login_state')
+        auth_response = request.url
+        if auth_response.startswith('http://') and 'localhost' not in auth_response and '127.0.0.1' not in auth_response:
+            auth_response = 'https://' + auth_response[7:]
+        flow.fetch_token(authorization_response=auth_response)
+        creds = flow.credentials
+        info  = req.get(
+            f'https://www.googleapis.com/oauth2/v1/userinfo?access_token={creds.token}'
+        ).json()
+        email     = info.get('email', '')
+        name      = info.get('name', '')
+        google_id = info.get('id', '')
+        db  = get_db()
+        row = db.execute(
+            "SELECT * FROM users WHERE email=? OR google_id=?", (email, google_id)
+        ).fetchone()
+        if row:
+            db.execute("UPDATE users SET google_id=?,name=? WHERE id=?",
+                       (google_id, name, row['id']))
+            db.commit()
+            login_user(User(row['id'], row['email'], name))
+        else:
+            db.execute(
+                "INSERT INTO users (email,google_id,name,created_at) VALUES (?,?,?,?)",
+                (email, google_id, name, datetime.now().isoformat())
+            )
+            db.commit()
+            row = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+            login_user(User(row['id'], email, name))
+        return redirect('/')
+    except Exception as e:
+        flash(f'Google login failed: {e}', 'error')
+        return redirect('/login')
 
 
 # ── Core routes ───────────────────────────────────────────────────────────────
