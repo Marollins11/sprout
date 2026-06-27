@@ -8,3 +8,4 @@ google-auth-oauthlib
 O365
 gunicorn
 icalendar
+flask-login

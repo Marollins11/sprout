@@ -292,6 +292,14 @@
     <button class="tab" id="tab-calendar" onclick="showTab('calendar')">Calendar</button>
     <button class="tab" id="tab-accounts" onclick="showTab('accounts')">Accounts</button>
   </div>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:14px;padding-right:110px">
+    <span style="font-size:12px;color:var(--text-muted)">{{ current_user.name }}</span>
+    <a href="/logout" style="font-size:12px;color:var(--text-muted);text-decoration:none;
+       padding:4px 10px;border:1px solid var(--border);border-radius:6px;transition:border-color 0.15s"
+       onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      Sign out
+    </a>
+  </div>
   <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Switch theme">
     <span id="theme-icon">☀</span>
     <span id="theme-label">Light</span>

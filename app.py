@@ -1,5 +1,7 @@
 # app.py
-from flask import Flask, jsonify, request, render_template, redirect, session
+from flask import Flask, jsonify, request, render_template, redirect, session, url_for, flash
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3, threading, time as _time, schedule as sched, os, json, secrets
 from datetime import datetime
 from google import genai
@@ -9,6 +11,23 @@ DB  = "tasks.db"
 
 from config import FLASK_SECRET, GEMINI_API_KEY
 app.secret_key = FLASK_SECRET
+
+login_manager = LoginManager(app)
+login_manager.login_view = 'login'
+
+class User(UserMixin):
+    def __init__(self, id, email, name):
+        self.id = str(id)
+        self.email = email
+        self.name = name or email
+
+@login_manager.user_loader
+def load_user(user_id):
+    row = get_db().execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    if not row:
+        return None
+    return User(row['id'], row['email'], row['name'])
+
 _genai_client = None
 
 def get_genai_client():
@@ -93,6 +112,14 @@ def init_db():
         label TEXT NOT NULL,
         credentials TEXT,
         active INTEGER DEFAULT 1,
+        created_at TEXT
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT,
+        google_id TEXT,
+        name TEXT,
         created_at TEXT
     )""")
     db.execute("INSERT OR IGNORE INTO projects VALUES (1,'personal','personal','#6B21A8')")
@@ -195,6 +222,127 @@ def handle_voice_reply(raw, host_url):
         return "Syncing Canvas now.", action
 
     return raw, action
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+_PUBLIC = {'login', 'google_login_start', 'google_login_callback', 'static'}
+
+@app.before_request
+def require_login():
+    if request.endpoint in _PUBLIC or current_user.is_authenticated:
+        return
+    return redirect(url_for('login'))
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect('/')
+    if request.method == 'POST':
+        mode     = request.form.get('mode')
+        email    = request.form.get('email', '').strip().lower()
+        password = request.form.get('password', '')
+        db = get_db()
+        if mode == 'register':
+            if db.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone():
+                flash('An account with that email already exists.', 'error')
+                return redirect('/login')
+            db.execute(
+                "INSERT INTO users (email,password_hash,created_at) VALUES (?,?,?)",
+                (email, generate_password_hash(password), datetime.now().isoformat())
+            )
+            db.commit()
+            row = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+            login_user(User(row['id'], row['email'], row['name']))
+            return redirect('/')
+        else:
+            row = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+            if not row or not row['password_hash'] or \
+               not check_password_hash(row['password_hash'], password):
+                flash('Invalid email or password.', 'error')
+                return redirect('/login')
+            login_user(User(row['id'], row['email'], row['name']))
+            return redirect('/')
+    return render_template('login.html')
+
+
+@app.route('/logout')
+def logout():
+    logout_user()
+    return redirect('/login')
+
+
+@app.route('/auth/google/start')
+def google_login_start():
+    from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        flash('Google login is not configured.', 'error')
+        return redirect('/login')
+    from google_auth_oauthlib.flow import Flow
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+    flow = Flow.from_client_config(
+        {'web': {
+            'client_id': GOOGLE_CLIENT_ID,
+            'client_secret': GOOGLE_CLIENT_SECRET,
+            'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
+            'token_uri': 'https://oauth2.googleapis.com/token',
+        }},
+        scopes=['openid',
+                'https://www.googleapis.com/auth/userinfo.email',
+                'https://www.googleapis.com/auth/userinfo.profile'],
+        redirect_uri=request.host_url.rstrip('/') + '/auth/google/callback'
+    )
+    auth_url, state = flow.authorization_url(access_type='offline')
+    session['google_login_state'] = state
+    return redirect(auth_url)
+
+
+@app.route('/auth/google/callback')
+def google_login_callback():
+    from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+    from google_auth_oauthlib.flow import Flow
+    import requests as req
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+    flow = Flow.from_client_config(
+        {'web': {
+            'client_id': GOOGLE_CLIENT_ID,
+            'client_secret': GOOGLE_CLIENT_SECRET,
+            'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
+            'token_uri': 'https://oauth2.googleapis.com/token',
+        }},
+        scopes=['openid',
+                'https://www.googleapis.com/auth/userinfo.email',
+                'https://www.googleapis.com/auth/userinfo.profile'],
+        redirect_uri=request.host_url.rstrip('/') + '/auth/google/callback',
+        state=session.get('google_login_state')
+    )
+    flow.fetch_token(authorization_response=request.url)
+    creds = flow.credentials
+    info  = req.get(
+        f'https://www.googleapis.com/oauth2/v1/userinfo?access_token={creds.token}'
+    ).json()
+    email     = info.get('email', '')
+    name      = info.get('name', '')
+    google_id = info.get('id', '')
+    db  = get_db()
+    row = db.execute(
+        "SELECT * FROM users WHERE email=? OR google_id=?", (email, google_id)
+    ).fetchone()
+    if row:
+        db.execute("UPDATE users SET google_id=?,name=? WHERE id=?",
+                   (google_id, name, row['id']))
+        db.commit()
+        login_user(User(row['id'], row['email'], name))
+    else:
+        db.execute(
+            "INSERT INTO users (email,google_id,name,created_at) VALUES (?,?,?,?)",
+            (email, google_id, name, datetime.now().isoformat())
+        )
+        db.commit()
+        row = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+        login_user(User(row['id'], email, name))
+    return redirect('/')
 
 
 # ── Core routes ───────────────────────────────────────────────────────────────
