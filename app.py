@@ -604,46 +604,46 @@ def delete_course_mapping(code):
 
 @app.route("/api/canvas/ical/sync", methods=["POST"])
 def sync_canvas_ical_now():
-    from ical_sync import fetch_ical_events
-    db = get_db()
-    row = db.execute(
-        "SELECT url FROM canvas_feeds WHERE user_id=?", (current_user.id,)
-    ).fetchone()
-    if not row:
-        return jsonify({"ok": False, "error": "No Canvas feed configured"}), 400
-    mappings = _get_user_mappings(db)
     try:
+        from ical_sync import fetch_ical_events
+        db = get_db()
+        row = db.execute(
+            "SELECT url FROM canvas_feeds WHERE user_id=?", (current_user.id,)
+        ).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "No Canvas feed configured"}), 400
+        mappings = _get_user_mappings(db)
         events = fetch_ical_events(row["url"], mappings=mappings)
+        existing = {t["title"] for t in db.execute("SELECT title FROM tasks").fetchall()}
+        SKIP_PATTERNS = ("class session", "class meeting", "lecture", "office hours")
+        added = 0
+        skipped_session = 0
+        skipped_dupe = 0
+        for e in events:
+            title = e["title"]
+            if any(title.lower().startswith(p) for p in SKIP_PATTERNS):
+                skipped_session += 1
+                continue
+            if title in existing:
+                skipped_dupe += 1
+                continue
+            color = get_or_create_project(e["course"], "school")
+            db.execute(
+                "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (title, "todo", e["course"], "school", color,
+                 datetime.now().isoformat(), e["start"], e.get("description"))
+            )
+            existing.add(title)
+            added += 1
+        db.commit()
+        return jsonify({"ok": True, "added": added,
+                        "total": len(events),
+                        "skipped_session": skipped_session,
+                        "skipped_dupe": skipped_dupe})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-    existing = {t["title"] for t in db.execute("SELECT title FROM tasks").fetchall()}
-    SKIP_PATTERNS = ("class session", "class meeting", "lecture", "office hours")
-    added = 0
-    skipped_session = 0
-    skipped_dupe = 0
-    for e in events:
-        title = e["title"]
-        if any(title.lower().startswith(p) for p in SKIP_PATTERNS):
-            skipped_session += 1
-            continue
-        if title in existing:
-            skipped_dupe += 1
-            continue
-        color = get_or_create_project(e["course"], "school")
-        db.execute(
-            "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description)"
-            " VALUES (?,?,?,?,?,?,?,?)",
-            (title, "todo", e["course"], "school", color,
-             datetime.now().isoformat(), e["start"], e.get("description"))
-        )
-        existing.add(title)
-        added += 1
-    db.commit()
-    return jsonify({"ok": True, "added": added,
-                    "total": len(events),
-                    "skipped_session": skipped_session,
-                    "skipped_dupe": skipped_dupe})
+        print(f"[sync error] {traceback.format_exc()}", flush=True)
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
 
 
 # ── Voice ─────────────────────────────────────────────────────────────────────

@@ -1038,30 +1038,40 @@
     document.querySelectorAll('#course-mapping-rows input').forEach(inp => {
       if (inp.value.trim()) mappings[inp.dataset.code] = inp.value.trim();
     });
-    await fetch('/api/canvas/course-mappings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(mappings)
-    });
     closeCourseModal();
     const msg = document.getElementById('canvas-feed-msg');
-    msg.style.color = 'var(--text-faint)'; msg.textContent = 'Syncing…';
-    const r = await fetch('/api/canvas/ical/sync', { method: 'POST' });
-    const d = await r.json();
-    if (d.ok) {
-      const n = d.added ?? 0;
-      msg.style.color = '#4ade80';
-      if (n > 0) {
-        msg.textContent = `Synced! ${n} assignment${n === 1 ? '' : 's'} added.`;
-      } else if ((d.total ?? 0) === 0) {
-        msg.textContent = 'Synced! Feed returned no events — check your URL.';
-      } else {
-        msg.textContent = `Synced! ${d.total} events found, ${d.skipped_session} class sessions, ${d.skipped_dupe} already on board.`;
+    try {
+      await fetch('/api/canvas/course-mappings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mappings)
+      });
+      msg.style.color = 'var(--text-faint)'; msg.textContent = 'Syncing…';
+      const r = await fetch('/api/canvas/ical/sync', { method: 'POST' });
+      const text = await r.text();
+      let d;
+      try { d = JSON.parse(text); } catch {
+        msg.style.color = '#f87171';
+        msg.textContent = `Server error (${r.status}): ${text.slice(0, 200)}`;
+        return;
       }
-      loadTasks();
-      loadMappings();
-    } else {
-      msg.style.color = '#f87171'; msg.textContent = d.error || 'Sync failed.';
+      if (d.ok) {
+        const n = d.added ?? 0;
+        msg.style.color = '#4ade80';
+        if (n > 0) {
+          msg.textContent = `Synced! ${n} assignment${n === 1 ? '' : 's'} added.`;
+        } else if ((d.total ?? 0) === 0) {
+          msg.textContent = 'Synced! Feed returned no events — check your URL.';
+        } else {
+          msg.textContent = `Synced! ${d.total} events found, ${d.skipped_session} class sessions, ${d.skipped_dupe} already on board.`;
+        }
+        loadTasks();
+        loadMappings();
+      } else {
+        msg.style.color = '#f87171'; msg.textContent = d.error || 'Sync failed.';
+      }
+    } catch(e) {
+      msg.style.color = '#f87171'; msg.textContent = 'Error: ' + e;
     }
   }
 
