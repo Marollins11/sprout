@@ -731,8 +731,9 @@ def canvas_auto_loop():
         _time.sleep(30)
 
 
+init_db()
+threading.Thread(target=canvas_auto_loop, daemon=True).start()
+
 if __name__ == "__main__":
-    init_db()
-    threading.Thread(target=canvas_auto_loop, daemon=True).start()
     port = int(os.getenv("PORT", 5001))
     app.run(host="0.0.0.0", port=port, debug=False)
