@@ -601,7 +601,7 @@ def sync_canvas_ical_now():
                 continue
         except Exception:
             pass
-        if any(title.lower() in t.lower() for t in existing):
+        if title in existing:
             continue
         color = get_or_create_project(e["course"], "school")
         db.execute(

@@ -349,6 +349,7 @@
       <button onclick="calNav(1)">&#8250;</button>
     </div>
     <div class="source-pills" id="source-pills"></div>
+    <div class="source-pills" id="course-legend" style="margin-left:auto"></div>
   </div>
   <div class="cal-grid-wrapper">
     <div class="cal-grid" id="cal-grid">
@@ -473,7 +474,7 @@
   let dueSortAsc = true;
   const sourcesEnabled = {};
   const SOURCE_COLORS = {
-    Google: '#2563EB', Outlook: '#0078D4', iCloud: '#6B21A8', Canvas: '#1A7F37'
+    Google: '#2563EB', Outlook: '#0078D4', iCloud: '#6B21A8'
   };
   const STATUS_CYCLE = { todo: 'in_progress', in_progress: 'done', done: 'todo' };
   const STATUS_LABEL = { todo: 'To Do', in_progress: 'In Progress', done: 'Done' };
@@ -835,6 +836,15 @@
         onclick="toggleSource('${s}')">${s}</button>`;
     }).join('');
 
+    // Course color legend (Canvas events only)
+    const courseMap = {};
+    calEvents.filter(e => e.source === 'Canvas' && e.course).forEach(e => {
+      courseMap[e.course] = e.color;
+    });
+    document.getElementById('course-legend').innerHTML = Object.entries(courseMap).map(
+      ([name, color]) => `<span class="source-pill" style="background:${color};color:#fff;border-color:${color};opacity:1;cursor:default">${esc(name)}</span>`
+    ).join('');
+
     const grid = document.getElementById('cal-grid');
     grid.innerHTML = '';
 
@@ -998,8 +1008,10 @@
     const r = await fetch('/api/canvas/ical/sync', { method: 'POST' });
     const d = await r.json();
     if (d.ok) {
-      msg.style.color = '#4ade80'; msg.textContent = 'Synced! Check your board.';
-      setTimeout(loadTasks, 2000);
+      const n = d.added ?? 0;
+      msg.style.color = '#4ade80';
+      msg.textContent = n > 0 ? `Synced! ${n} assignment${n === 1 ? '' : 's'} added.` : 'Synced! (no new assignments)';
+      loadTasks();
     } else {
       msg.style.color = '#f87171'; msg.textContent = d.error || 'Sync failed.';
     }

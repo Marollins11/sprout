@@ -4,6 +4,20 @@ import requests
 from icalendar import Calendar
 from datetime import datetime, timezone, date as date_type
 
+_PALETTE = [
+    "#7C3AED",  # violet
+    "#2563EB",  # blue
+    "#0D9488",  # teal
+    "#D97706",  # amber
+    "#DC2626",  # red
+    "#BE185D",  # pink
+    "#059669",  # emerald
+    "#B45309",  # brown
+]
+
+def _course_color(name):
+    return _PALETTE[hash(name.lower()) % len(_PALETTE)]
+
 
 def _is_separator(line):
     return len(line.strip("-_ \t*=")) == 0
@@ -77,12 +91,13 @@ def fetch_ical_events(url, mappings=None):
         else:
             dt = dt.astimezone(timezone.utc)
         raw_desc = str(component.get("DESCRIPTION", "")).strip()
+        course = _extract_course(component, mappings=mappings)
         events.append({
             "title": summary,
             "start": dt.isoformat(),
             "source": "Canvas",
-            "color": "#1A7F37",
-            "course": _extract_course(component, mappings=mappings),
+            "color": _course_color(course),
+            "course": course,
             "description": raw_desc or None,
         })
     return events
