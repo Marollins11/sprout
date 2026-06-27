@@ -311,6 +311,14 @@ def google_login_start():
         flow = _google_flow(_callback_uri())
         auth_url, state = flow.authorization_url(access_type='offline')
         session['google_login_state'] = state
+        # Save code_verifier if PKCE was used
+        cv = getattr(flow, 'code_verifier', None)
+        if cv is None:
+            try:
+                cv = flow.oauth2session.code_challenge
+            except Exception:
+                pass
+        session['google_cv'] = cv
         return redirect(auth_url)
     except Exception as e:
         flash(f'Google login error: {e}', 'error')
@@ -327,7 +335,8 @@ def google_login_callback():
         auth_response = request.url
         if auth_response.startswith('http://') and 'localhost' not in auth_response and '127.0.0.1' not in auth_response:
             auth_response = 'https://' + auth_response[7:]
-        flow.fetch_token(authorization_response=auth_response)
+        flow.fetch_token(authorization_response=auth_response,
+                         code_verifier=session.get('google_cv'))
         creds = flow.credentials
         info  = req.get(
             f'https://www.googleapis.com/oauth2/v1/userinfo?access_token={creds.token}'
