@@ -124,6 +124,19 @@ def init_db():
         name TEXT,
         created_at TEXT
     )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS canvas_feeds (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER UNIQUE NOT NULL,
+        url TEXT NOT NULL,
+        created_at TEXT
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS course_mappings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        course_code TEXT NOT NULL,
+        course_name TEXT NOT NULL,
+        UNIQUE(user_id, course_code)
+    )""")
     db.execute("INSERT OR IGNORE INTO projects VALUES (1,'personal','personal','#6B21A8')")
     db.commit()
 
@@ -459,13 +472,14 @@ def get_events():
         events += get_canvas_events_for_calendar()
     except Exception:
         pass
-    row = get_db().execute(
-        "SELECT credentials FROM calendar_accounts WHERE type='canvas_ical' AND active=1 LIMIT 1"
-    ).fetchone()
-    if row:
+    db = get_db()
+    feed = db.execute("SELECT url FROM canvas_feeds WHERE user_id=?",
+                      (current_user.id,)).fetchone()
+    if feed:
         try:
             from ical_sync import fetch_ical_events
-            events += fetch_ical_events(json.loads(row["credentials"])["url"])
+            mappings = _get_user_mappings(db)
+            events += fetch_ical_events(feed["url"], mappings=mappings)
         except Exception as e:
             print(f"iCal fetch error: {e}")
     return jsonify(sorted(events, key=lambda x: x["start"]))
@@ -478,29 +492,35 @@ def do_canvas_sync():
     return jsonify({"ok": True})
 
 
-# ── Canvas iCal feed ──────────────────────────────────────────────────────────
+# ── Canvas iCal feed (per-user) ───────────────────────────────────────────────
+
+def _get_user_mappings(db=None):
+    db = db or get_db()
+    rows = db.execute(
+        "SELECT course_code, course_name FROM course_mappings WHERE user_id=?",
+        (current_user.id,)
+    ).fetchall()
+    return {r["course_code"]: r["course_name"] for r in rows}
+
 
 @app.route("/api/canvas/ical", methods=["GET"])
 def get_canvas_ical():
     row = get_db().execute(
-        "SELECT id, credentials FROM calendar_accounts WHERE type='canvas_ical' LIMIT 1"
+        "SELECT url FROM canvas_feeds WHERE user_id=?", (current_user.id,)
     ).fetchone()
-    if not row:
-        return jsonify({"url": None})
-    return jsonify({"id": row["id"], "url": json.loads(row["credentials"])["url"]})
+    return jsonify({"url": row["url"] if row else None})
 
 
 @app.route("/api/canvas/ical", methods=["POST"])
 def save_canvas_ical():
-    d = request.json
-    url = (d.get("url") or "").strip()
+    url = (request.json.get("url") or "").strip()
     if not url:
         return jsonify({"ok": False, "error": "URL required"}), 400
     db = get_db()
-    db.execute("DELETE FROM calendar_accounts WHERE type='canvas_ical'")
     db.execute(
-        "INSERT INTO calendar_accounts (type,label,credentials,active,created_at) VALUES (?,?,?,1,?)",
-        ("canvas_ical", "Canvas Calendar", json.dumps({"url": url}), datetime.now().isoformat())
+        "INSERT INTO canvas_feeds (user_id,url,created_at) VALUES (?,?,?) "
+        "ON CONFLICT(user_id) DO UPDATE SET url=excluded.url",
+        (current_user.id, url, datetime.now().isoformat())
     )
     db.commit()
     return jsonify({"ok": True})
@@ -509,28 +529,69 @@ def save_canvas_ical():
 @app.route("/api/canvas/ical", methods=["DELETE"])
 def delete_canvas_ical():
     db = get_db()
-    db.execute("DELETE FROM calendar_accounts WHERE type='canvas_ical'")
+    db.execute("DELETE FROM canvas_feeds WHERE user_id=?", (current_user.id,))
+    db.execute("DELETE FROM course_mappings WHERE user_id=?", (current_user.id,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/canvas/courses")
+def get_canvas_courses():
+    row = get_db().execute(
+        "SELECT url FROM canvas_feeds WHERE user_id=?", (current_user.id,)
+    ).fetchone()
+    if not row:
+        return jsonify({"ok": False, "error": "No Canvas feed configured"}), 400
+    try:
+        from ical_sync import detect_course_codes
+        codes = detect_course_codes(row["url"])
+        mappings = _get_user_mappings()
+        return jsonify({"ok": True, "codes": codes, "mappings": mappings})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/canvas/course-mappings", methods=["POST"])
+def save_course_mappings():
+    d = request.json
+    db = get_db()
+    for code, name in d.items():
+        name = (name or "").strip()
+        if name:
+            db.execute(
+                "INSERT INTO course_mappings (user_id,course_code,course_name) VALUES (?,?,?) "
+                "ON CONFLICT(user_id,course_code) DO UPDATE SET course_name=excluded.course_name",
+                (current_user.id, code, name)
+            )
+        else:
+            db.execute(
+                "DELETE FROM course_mappings WHERE user_id=? AND course_code=?",
+                (current_user.id, code)
+            )
     db.commit()
     return jsonify({"ok": True})
 
 
 @app.route("/api/canvas/ical/sync", methods=["POST"])
 def sync_canvas_ical_now():
-    row = get_db().execute(
-        "SELECT credentials FROM calendar_accounts WHERE type='canvas_ical' LIMIT 1"
+    db = get_db()
+    row = db.execute(
+        "SELECT url FROM canvas_feeds WHERE user_id=?", (current_user.id,)
     ).fetchone()
     if not row:
         return jsonify({"ok": False, "error": "No Canvas feed configured"}), 400
-    url = json.loads(row["credentials"])["url"]
+    mappings = _get_user_mappings(db)
     host = request.host_url.rstrip("/")
-    threading.Thread(target=lambda: _run_ical_sync(url, host), daemon=True).start()
+    threading.Thread(
+        target=lambda: _run_ical_sync(row["url"], host, mappings), daemon=True
+    ).start()
     return jsonify({"ok": True})
 
 
-def _run_ical_sync(url, host):
+def _run_ical_sync(url, host, mappings=None):
     try:
         from ical_sync import sync_ical_to_kanban
-        sync_ical_to_kanban(url, host)
+        sync_ical_to_kanban(url, host, mappings=mappings)
     except Exception as e:
         print(f"Canvas iCal sync error: {e}")
 

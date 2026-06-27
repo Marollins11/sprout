@@ -958,6 +958,42 @@
 
   async function syncCanvasFeed() {
     const msg = document.getElementById('canvas-feed-msg');
+    msg.style.color = 'var(--text-faint)'; msg.textContent = 'Checking courses…';
+    try {
+      const r = await fetch('/api/canvas/courses');
+      const d = await r.json();
+      if (!d.ok) { msg.style.color = '#f87171'; msg.textContent = d.error || 'Could not load courses.'; return; }
+      document.getElementById('course-mapping-rows').innerHTML = d.codes.map(code => `
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+          <label style="flex:0 0 200px;font-size:12px;color:var(--text-muted);word-break:break-all">${esc(code)}</label>
+          <input type="text" data-code="${esc(code)}" value="${esc(d.mappings[code] || '')}"
+            placeholder="e.g. Marketing 101"
+            style="flex:1;background:var(--surface-low);border:1px solid var(--border);border-radius:6px;
+                   padding:6px 10px;color:var(--text);font-size:13px" />
+        </div>`).join('');
+      document.getElementById('course-modal').classList.add('show');
+      msg.textContent = '';
+    } catch(e) {
+      msg.style.color = '#f87171'; msg.textContent = 'Error: ' + e;
+    }
+  }
+
+  function closeCourseModal() {
+    document.getElementById('course-modal').classList.remove('show');
+  }
+
+  async function saveMappingsAndSync() {
+    const mappings = {};
+    document.querySelectorAll('#course-mapping-rows input').forEach(inp => {
+      if (inp.value.trim()) mappings[inp.dataset.code] = inp.value.trim();
+    });
+    await fetch('/api/canvas/course-mappings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(mappings)
+    });
+    closeCourseModal();
+    const msg = document.getElementById('canvas-feed-msg');
     msg.style.color = 'var(--text-faint)'; msg.textContent = 'Syncing…';
     const r = await fetch('/api/canvas/ical/sync', { method: 'POST' });
     const d = await r.json();
@@ -1028,6 +1064,22 @@
 </script>
 
 <!-- ── VOICE BUTTON ── -->
+<!-- ── COURSE MAPPING MODAL ── -->
+<div class="modal-overlay" id="course-modal" onclick="if(event.target===this)closeCourseModal()">
+  <div class="modal" style="width:480px">
+    <h3>Map Your Canvas Courses</h3>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px">
+      Give each course code a name so your assignments are labeled correctly.
+      Leave blank to skip a course.
+    </p>
+    <div id="course-mapping-rows"></div>
+    <div class="modal-btns">
+      <button class="btn btn-secondary" onclick="closeCourseModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveMappingsAndSync()">Save &amp; Sync</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── CARD DETAIL MODAL ── -->
 <div class="modal-overlay" id="card-modal" onclick="handleCardModalClick(event)">
   <div class="detail-modal">

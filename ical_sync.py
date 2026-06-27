@@ -1,47 +1,60 @@
 # ical_sync.py
+import re
 import requests
 from icalendar import Calendar
 from datetime import datetime, timezone, date as date_type
 
 
 def _is_separator(line):
-    """True for lines that are just dashes, underscores, or similar fillers."""
-    stripped = line.strip("-_ \t*=")
-    return len(stripped) == 0
+    return len(line.strip("-_ \t*=")) == 0
 
 
-def _extract_course(component):
-    """Best-effort course name extraction from a Canvas VEVENT."""
-    # Canvas sometimes puts the course in CATEGORIES
+def _extract_code(component):
+    """Return the raw course code from the SUMMARY bracket, or None."""
+    summary = str(component.get("SUMMARY", "")).strip()
+    m = re.search(r"\[([^\]]+)\]", summary)
+    return m.group(1) if m else None
+
+
+def _extract_course(component, mappings=None):
+    """Return a course name using user mappings, then fallback heuristics."""
+    code = _extract_code(component)
+    if code:
+        if mappings and code in mappings:
+            return mappings[code]
+        return code.lower()
+
     cats = component.get("CATEGORIES")
     if cats:
         val = str(cats).strip()
         if val and not _is_separator(val):
             return val.lower()
 
-    # Canvas often embeds the course code in the SUMMARY: "Title [COURSE-CODE]"
-    summary = str(component.get("SUMMARY", "")).strip()
-    import re
-    bracket = re.search(r"\[261V-MGMT-(\d+)-", summary)
-    if bracket:
-        code_map = {"241": "tech and innovation", "266": "new product development"}
-        course = code_map.get(bracket.group(1))
-        if course:
-            return course
-
-    # Fall back to first meaningful line of DESCRIPTION
     desc = str(component.get("DESCRIPTION", "")).strip()
-    if desc:
-        for line in desc.splitlines():
-            line = line.strip()
-            if line and not line.startswith("http") and not _is_separator(line) and len(line) < 100:
-                return line.lower()
+    for line in desc.splitlines():
+        line = line.strip()
+        if line and not line.startswith("http") and not _is_separator(line) and len(line) < 100:
+            return line.lower()
 
     return "canvas"
 
 
-def fetch_ical_events(url):
-    import re
+def detect_course_codes(url):
+    """Fetch the feed and return a sorted list of unique course codes found."""
+    r = requests.get(url, timeout=15)
+    r.raise_for_status()
+    cal = Calendar.from_ical(r.content)
+    codes = set()
+    for component in cal.walk():
+        if component.name != "VEVENT":
+            continue
+        code = _extract_code(component)
+        if code:
+            codes.add(code)
+    return sorted(codes)
+
+
+def fetch_ical_events(url, mappings=None):
     r = requests.get(url, timeout=15)
     r.raise_for_status()
     cal = Calendar.from_ical(r.content)
@@ -52,7 +65,6 @@ def fetch_ical_events(url):
         summary = str(component.get("SUMMARY", "")).strip()
         if not summary:
             continue
-        # Strip "[COURSE-CODE]" Canvas appends to the title
         summary = re.sub(r"\s*\[[^\]]+\]\s*$", "", summary).strip()
         dtstart = component.get("DTSTART")
         if not dtstart:
@@ -70,28 +82,27 @@ def fetch_ical_events(url):
             "start": dt.isoformat(),
             "source": "Canvas",
             "color": "#1A7F37",
-            "course": _extract_course(component),
+            "course": _extract_course(component, mappings=mappings),
             "description": raw_desc or None,
         })
     return events
 
 
-def sync_ical_to_kanban(url, flask_url):
+def sync_ical_to_kanban(url, flask_url, mappings=None):
     now = datetime.now(timezone.utc)
-    events = fetch_ical_events(url)
+    events = fetch_ical_events(url, mappings=mappings)
     try:
         existing = {t["title"] for t in requests.get(f"{flask_url}/api/tasks").json()}
     except Exception:
         return
-    SKIP_PATTERNS = ("class session", "class meeting", "lecture", "office hours")
 
+    SKIP_PATTERNS = ("class session", "class meeting", "lecture", "office hours")
     for e in events:
         title = e["title"]
         if any(title.lower().startswith(p) for p in SKIP_PATTERNS):
             continue
         try:
-            due_dt = datetime.fromisoformat(e["start"])
-            if due_dt < now:
+            if datetime.fromisoformat(e["start"]) < now:
                 continue
         except Exception:
             pass
