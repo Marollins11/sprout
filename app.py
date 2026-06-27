@@ -9,7 +9,13 @@ DB  = "tasks.db"
 
 from config import FLASK_SECRET, GEMINI_API_KEY
 app.secret_key = FLASK_SECRET
-_genai_client = genai.Client(api_key=GEMINI_API_KEY)
+_genai_client = None
+
+def get_genai_client():
+    global _genai_client
+    if _genai_client is None:
+        _genai_client = genai.Client(api_key=GEMINI_API_KEY)
+    return _genai_client
 
 FAMILY_PALETTES = {
     "work":     ["1F6FEB", "1565C0", "0D47A1", "3B82F6", "60A5FA", "93C5FD", "BFDBFE"],
@@ -37,7 +43,7 @@ _chat_sessions = {}
 
 def get_chat(sid):
     if sid not in _chat_sessions:
-        _chat_sessions[sid] = _genai_client.chats.create(
+        _chat_sessions[sid] = get_genai_client().chats.create(
             model="gemini-2.5-pro",
             config={"system_instruction": VOICE_SYSTEM}
         )
