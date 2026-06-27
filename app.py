@@ -141,9 +141,10 @@ def init_db():
     db.commit()
 
 
-def get_or_create_project(name, family):
+def get_or_create_project(name, family, db=None):
     global auto_idx
-    db = get_db()
+    _own = db is None
+    db = db or get_db()
     nm = name.lower().strip()
     fm = (family or "").lower().strip()
     row = db.execute("SELECT color FROM projects WHERE name=?", (nm,)).fetchone()
@@ -161,7 +162,8 @@ def get_or_create_project(name, family):
             FAMILY_PALETTES[fm] = [color]
     db.execute("INSERT OR IGNORE INTO projects (name,family,color) VALUES (?,?,?)",
                (nm, fm or "other", "#" + color))
-    db.commit()
+    if _own:
+        db.commit()
     return "#" + color
 
 
@@ -627,7 +629,7 @@ def sync_canvas_ical_now():
             if title in existing:
                 skipped_dupe += 1
                 continue
-            color = get_or_create_project(e["course"], "school")
+            color = get_or_create_project(e["course"], "school", db=db)
             db.execute(
                 "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description)"
                 " VALUES (?,?,?,?,?,?,?,?)",
