@@ -574,6 +574,8 @@ def save_course_mappings():
 
 @app.route("/api/canvas/ical/sync", methods=["POST"])
 def sync_canvas_ical_now():
+    from ical_sync import fetch_ical_events
+    from datetime import timezone
     db = get_db()
     row = db.execute(
         "SELECT url FROM canvas_feeds WHERE user_id=?", (current_user.id,)
@@ -581,19 +583,37 @@ def sync_canvas_ical_now():
     if not row:
         return jsonify({"ok": False, "error": "No Canvas feed configured"}), 400
     mappings = _get_user_mappings(db)
-    host = request.host_url.rstrip("/")
-    threading.Thread(
-        target=lambda: _run_ical_sync(row["url"], host, mappings), daemon=True
-    ).start()
-    return jsonify({"ok": True})
-
-
-def _run_ical_sync(url, host, mappings=None):
     try:
-        from ical_sync import sync_ical_to_kanban
-        sync_ical_to_kanban(url, host, mappings=mappings)
+        events = fetch_ical_events(row["url"], mappings=mappings)
     except Exception as e:
-        print(f"Canvas iCal sync error: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    now = datetime.now(timezone.utc)
+    existing = {t["title"] for t in db.execute("SELECT title FROM tasks").fetchall()}
+    SKIP_PATTERNS = ("class session", "class meeting", "lecture", "office hours")
+    added = 0
+    for e in events:
+        title = e["title"]
+        if any(title.lower().startswith(p) for p in SKIP_PATTERNS):
+            continue
+        try:
+            if datetime.fromisoformat(e["start"]) < now:
+                continue
+        except Exception:
+            pass
+        if any(title.lower() in t.lower() for t in existing):
+            continue
+        color = get_or_create_project(e["course"], "school")
+        db.execute(
+            "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (title, "todo", e["course"], "school", color,
+             datetime.now().isoformat(), e["start"], e.get("description"))
+        )
+        existing.add(title)
+        added += 1
+    db.commit()
+    return jsonify({"ok": True, "added": added})
 
 
 # ── Voice ─────────────────────────────────────────────────────────────────────
