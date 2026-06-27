@@ -3,7 +3,7 @@ from flask import Flask, jsonify, request, render_template, redirect, session, u
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
-import sqlite3, threading, time as _time, schedule as sched, os, json, secrets
+import sqlite3, threading, time as _time, schedule as sched, os, json, secrets, traceback
 from datetime import datetime
 from google import genai
 
@@ -253,18 +253,22 @@ def require_login():
     return redirect(url_for('login'))
 
 
-@app.errorhandler(500)
-def handle_500(e):
+@app.errorhandler(Exception)
+def handle_exception(e):
+    orig = getattr(e, 'original_exception', e)
+    tb = traceback.format_exc()
+    print(f"[ERROR] {request.method} {request.path}\n{tb}", flush=True)
+    msg = f"{type(orig).__name__}: {orig}"
     if request.path.startswith('/api/'):
-        return jsonify({"ok": False, "error": str(e)}), 500
-    return str(e), 500
+        return jsonify({"ok": False, "error": msg}), 500
+    return f"<pre>Error on {request.path}:\n{msg}\n\n{tb}</pre>", 500
 
 
 @app.errorhandler(404)
 def handle_404(e):
     if request.path.startswith('/api/'):
         return jsonify({"ok": False, "error": "Not found"}), 404
-    return str(e), 404
+    return f"Not found: {request.path}", 404
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -601,7 +605,6 @@ def delete_course_mapping(code):
 @app.route("/api/canvas/ical/sync", methods=["POST"])
 def sync_canvas_ical_now():
     from ical_sync import fetch_ical_events
-    from datetime import timezone
     db = get_db()
     row = db.execute(
         "SELECT url FROM canvas_feeds WHERE user_id=?", (current_user.id,)
@@ -825,14 +828,6 @@ def canvas_auto_loop():
             sync_to_kanban("http://localhost:5001")
         except Exception as e:
             print(f"Canvas API sync error: {e}")
-        try:
-            row = get_db().execute(
-                "SELECT credentials FROM calendar_accounts WHERE type='canvas_ical' AND active=1 LIMIT 1"
-            ).fetchone()
-            if row:
-                _run_ical_sync(json.loads(row["credentials"])["url"], "http://localhost:5001")
-        except Exception as e:
-            print(f"Canvas iCal loop error: {e}")
     sched.every(15).minutes.do(job)
     while True:
         sched.run_pending()
