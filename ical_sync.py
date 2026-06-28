@@ -68,7 +68,7 @@ def detect_course_codes(url):
     return sorted(codes)
 
 
-def fetch_ical_events(url, mappings=None):
+def fetch_ical_events(url, mappings=None, colors=None):
     r = requests.get(url, timeout=15)
     r.raise_for_status()
     cal = Calendar.from_ical(r.content)
@@ -97,11 +97,13 @@ def fetch_ical_events(url, mappings=None):
             dt = dt.astimezone(timezone.utc)
         raw_desc = str(component.get("DESCRIPTION", "")).strip()
         course = _extract_course(component, mappings=mappings)
+        code   = _extract_code(component)
+        color  = (colors or {}).get(code) or _course_color(course)
         events.append({
             "title": summary,
             "start": dt.isoformat(),
             "source": "Canvas",
-            "color": _course_color(course),
+            "color": color,
             "course": course,
             "description": raw_desc or None,
         })

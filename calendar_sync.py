@@ -2,7 +2,8 @@
 import sqlite3, json
 from datetime import datetime, timedelta
 
-DB = "tasks.db"
+import os as _os
+DB = _os.getenv("DATABASE_PATH", "tasks.db")
 
 
 def get_active_accounts():

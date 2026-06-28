@@ -9,7 +9,7 @@ from google import genai
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
-DB  = "tasks.db"
+DB = os.getenv("DATABASE_PATH", "tasks.db")
 
 from config import FLASK_SECRET, GEMINI_API_KEY
 app.secret_key = FLASK_SECRET
@@ -135,8 +135,13 @@ def init_db():
         user_id INTEGER NOT NULL,
         course_code TEXT NOT NULL,
         course_name TEXT NOT NULL,
+        color TEXT,
         UNIQUE(user_id, course_code)
     )""")
+    try:
+        db.execute("ALTER TABLE course_mappings ADD COLUMN color TEXT")
+    except Exception:
+        pass
     db.execute("INSERT OR IGNORE INTO projects VALUES (1,'personal','personal','#6B21A8')")
     db.commit()
 
@@ -502,7 +507,8 @@ def get_events():
         try:
             from ical_sync import fetch_ical_events
             mappings = _get_user_mappings(db)
-            events += fetch_ical_events(feed["url"], mappings=mappings)
+            colors  = _get_user_mapping_colors(db)
+            events += fetch_ical_events(feed["url"], mappings=mappings, colors=colors)
         except Exception as e:
             print(f"iCal fetch error: {e}")
     return jsonify(sorted(events, key=lambda x: x["start"]))
@@ -524,6 +530,15 @@ def _get_user_mappings(db=None):
         (current_user.id,)
     ).fetchall()
     return {r["course_code"]: r["course_name"] for r in rows}
+
+
+def _get_user_mapping_colors(db=None):
+    db = db or get_db()
+    rows = db.execute(
+        "SELECT course_code, color FROM course_mappings WHERE user_id=? AND color IS NOT NULL",
+        (current_user.id,)
+    ).fetchall()
+    return {r["course_code"]: r["color"] for r in rows}
 
 
 @app.route("/api/canvas/ical", methods=["GET"])
@@ -577,10 +592,33 @@ def get_canvas_courses():
 @app.route("/api/canvas/course-mappings", methods=["GET"])
 def get_course_mappings():
     rows = get_db().execute(
-        "SELECT course_code, course_name FROM course_mappings WHERE user_id=? ORDER BY course_name",
+        "SELECT course_code, course_name, color FROM course_mappings WHERE user_id=? ORDER BY course_name",
         (current_user.id,)
     ).fetchall()
-    return jsonify([{"code": r["course_code"], "name": r["course_name"]} for r in rows])
+    return jsonify([{"code": r["course_code"], "name": r["course_name"],
+                     "color": r["color"] or "#818cf8"} for r in rows])
+
+
+@app.route("/api/canvas/course-mappings/color", methods=["POST"])
+def update_mapping_color():
+    data  = request.json
+    code  = data.get("code", "")
+    color = data.get("color", "#818cf8")
+    db = get_db()
+    row = db.execute(
+        "SELECT course_name FROM course_mappings WHERE user_id=? AND course_code=?",
+        (current_user.id, code)
+    ).fetchone()
+    db.execute(
+        "UPDATE course_mappings SET color=? WHERE user_id=? AND course_code=?",
+        (color, current_user.id, code)
+    )
+    if row:
+        nm = row["course_name"].lower().strip()
+        db.execute("UPDATE projects SET color=? WHERE name=?", (color, nm))
+        db.execute("UPDATE tasks SET color=? WHERE project=?", (color, nm))
+    db.commit()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/canvas/course-mappings", methods=["POST"])

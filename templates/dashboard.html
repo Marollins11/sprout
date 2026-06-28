@@ -965,14 +965,26 @@
       if (!rows.length) { section.style.display = 'none'; return; }
       section.style.display = '';
       list.innerHTML = rows.map(m => `
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <input type="color" value="${esc(m.color)}"
+            style="width:28px;height:28px;border:none;border-radius:6px;cursor:pointer;padding:0;background:none;flex-shrink:0"
+            onchange='updateMappingColor(${JSON.stringify(m.code)}, this.value)' />
           <span style="flex:1;font-size:13px;color:var(--text)">${esc(m.name)}</span>
-          <span style="font-size:11px;color:var(--text-faint);flex:0 0 auto">${esc(m.code)}</span>
+          <span style="font-size:11px;color:var(--text-faint)">${esc(m.code)}</span>
           <button class="btn btn-secondary"
             style="padding:3px 10px;font-size:11px;color:#f87171;flex-shrink:0"
             onclick='deleteMapping(${JSON.stringify(m.code)})'>Remove</button>
         </div>`).join('');
     } catch(e) { /* ignore */ }
+  }
+
+  async function updateMappingColor(code, color) {
+    await fetch('/api/canvas/course-mappings/color', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({code, color})
+    });
+    loadTasks();
   }
 
   async function deleteMapping(code) {
