@@ -53,9 +53,15 @@ def _extract_course(component, mappings=None):
     return "canvas"
 
 
+_ICAL_HEADERS = {
+    "Accept": "text/calendar, application/calendar+json, */*",
+    "User-Agent": "Mozilla/5.0 (compatible; Sprout/1.0)",
+}
+
+
 def detect_course_codes(url):
     """Fetch the feed and return a sorted list of unique course codes found."""
-    r = requests.get(url, timeout=15)
+    r = requests.get(url, timeout=15, headers=_ICAL_HEADERS)
     r.raise_for_status()
     cal = Calendar.from_ical(r.content)
     codes = set()
@@ -69,7 +75,7 @@ def detect_course_codes(url):
 
 
 def fetch_ical_events(url, mappings=None, colors=None):
-    r = requests.get(url, timeout=15)
+    r = requests.get(url, timeout=15, headers=_ICAL_HEADERS)
     r.raise_for_status()
     cal = Calendar.from_ical(r.content)
     events = []
