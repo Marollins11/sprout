@@ -607,8 +607,16 @@ def save_course_mappings():
 @app.route("/api/canvas/course-mappings/<path:code>", methods=["DELETE"])
 def delete_course_mapping(code):
     db = get_db()
+    row = db.execute(
+        "SELECT course_name FROM course_mappings WHERE user_id=? AND course_code=?",
+        (current_user.id, code)
+    ).fetchone()
     db.execute("DELETE FROM course_mappings WHERE user_id=? AND course_code=?",
                (current_user.id, code))
+    if row:
+        nm = row["course_name"].lower().strip()
+        db.execute("DELETE FROM tasks WHERE project=?", (nm,))
+        db.execute("DELETE FROM projects WHERE name=?", (nm,))
     db.commit()
     return jsonify({"ok": True})
 

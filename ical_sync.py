@@ -76,6 +76,11 @@ def fetch_ical_events(url, mappings=None):
     for component in cal.walk():
         if component.name != "VEVENT":
             continue
+        # When the user has mappings, only include courses they've mapped
+        if mappings:
+            code = _extract_code(component)
+            if code and code not in mappings:
+                continue
         summary = str(component.get("SUMMARY", "")).strip()
         if not summary:
             continue

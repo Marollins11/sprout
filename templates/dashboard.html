@@ -970,15 +970,16 @@
           <span style="font-size:11px;color:var(--text-faint);flex:0 0 auto">${esc(m.code)}</span>
           <button class="btn btn-secondary"
             style="padding:3px 10px;font-size:11px;color:#f87171;flex-shrink:0"
-            onclick="deleteMapping(${JSON.stringify(m.code)})">Remove</button>
+            onclick='deleteMapping(${JSON.stringify(m.code)})'>Remove</button>
         </div>`).join('');
     } catch(e) { /* ignore */ }
   }
 
   async function deleteMapping(code) {
-    if (!confirm(`Remove "${code}" from your courses? Existing tasks will stay, but new syncs won't add more from this course.`)) return;
+    if (!confirm(`Remove this course? Its tasks will be deleted from your board.`)) return;
     await fetch('/api/canvas/course-mappings/' + encodeURIComponent(code), { method: 'DELETE' });
     loadMappings();
+    loadTasks();
   }
 
   async function saveCanvasFeed() {
