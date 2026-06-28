@@ -616,7 +616,7 @@ def update_mapping_color():
     if row:
         nm = row["course_name"].lower().strip()
         db.execute("UPDATE projects SET color=? WHERE name=?", (color, nm))
-        db.execute("UPDATE tasks SET color=? WHERE project=?", (color, nm))
+        db.execute("UPDATE tasks SET color=? WHERE LOWER(project)=?", (color, nm))
     db.commit()
     return jsonify({"ok": True})
 
@@ -653,8 +653,8 @@ def delete_course_mapping(code):
                (current_user.id, code))
     if row:
         nm = row["course_name"].lower().strip()
-        db.execute("DELETE FROM tasks WHERE project=?", (nm,))
-        db.execute("DELETE FROM projects WHERE name=?", (nm,))
+        db.execute("DELETE FROM tasks WHERE LOWER(project)=?", (nm,))
+        db.execute("DELETE FROM projects WHERE LOWER(name)=?", (nm,))
     db.commit()
     return jsonify({"ok": True})
 
@@ -688,7 +688,7 @@ def sync_canvas_ical_now():
             db.execute(
                 "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description)"
                 " VALUES (?,?,?,?,?,?,?,?)",
-                (title, "todo", e["course"], "school", color,
+                (title, "todo", e["course"].lower(), "school", color,
                  datetime.now().isoformat(), e["start"], e.get("description"))
             )
             existing.add(title)
