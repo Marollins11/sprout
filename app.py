@@ -574,6 +574,15 @@ def get_canvas_courses():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/canvas/course-mappings", methods=["GET"])
+def get_course_mappings():
+    rows = get_db().execute(
+        "SELECT course_code, course_name FROM course_mappings WHERE user_id=? ORDER BY course_name",
+        (current_user.id,)
+    ).fetchall()
+    return jsonify([{"code": r["course_code"], "name": r["course_name"]} for r in rows])
+
+
 @app.route("/api/canvas/course-mappings", methods=["POST"])
 def save_course_mappings():
     d = request.json

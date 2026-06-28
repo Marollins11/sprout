@@ -383,6 +383,9 @@
 
   <div class="accounts-section" id="mappings-section" style="display:none">
     <h2>Course Mappings</h2>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+      These are the class names used to label your Canvas assignments. Remove a course to stop it appearing on your board and calendar.
+    </p>
     <div id="mappings-list"></div>
   </div>
 
@@ -955,29 +958,25 @@
 
   async function loadMappings() {
     try {
-      const r = await fetch('/api/canvas/courses');
-      const d = await r.json();
       const section = document.getElementById('mappings-section');
       const list    = document.getElementById('mappings-list');
-      if (!d.ok || !d.codes || d.codes.length === 0) {
-        section.style.display = 'none';
-        return;
-      }
+      const r = await fetch('/api/canvas/course-mappings');
+      const rows = await r.json();
+      if (!rows.length) { section.style.display = 'none'; return; }
       section.style.display = '';
-      list.innerHTML = d.codes.map(code => {
-        const name = d.mappings[code] || '';
-        return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:13px">
-          <span style="flex:0 0 200px;color:var(--text-muted);font-size:11px;word-break:break-all">${esc(code)}</span>
-          <span style="flex:1;color:var(--text)">${esc(name) || '<em style="color:var(--text-faint)">unmapped</em>'}</span>
-          ${name ? `<button class="btn btn-secondary" style="padding:3px 10px;font-size:11px;color:#f87171"
-            onclick="deleteMapping('${esc(code)}')">Remove</button>` : ''}
-        </div>`;
-      }).join('');
-    } catch (e) { /* ignore */ }
+      list.innerHTML = rows.map(m => `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span style="flex:1;font-size:13px;color:var(--text)">${esc(m.name)}</span>
+          <span style="font-size:11px;color:var(--text-faint);flex:0 0 auto">${esc(m.code)}</span>
+          <button class="btn btn-secondary"
+            style="padding:3px 10px;font-size:11px;color:#f87171;flex-shrink:0"
+            onclick="deleteMapping(${JSON.stringify(m.code)})">Remove</button>
+        </div>`).join('');
+    } catch(e) { /* ignore */ }
   }
 
   async function deleteMapping(code) {
-    if (!confirm(`Remove mapping for "${code}"? It will show as the raw course code until you re-map it.`)) return;
+    if (!confirm(`Remove "${code}" from your courses? Existing tasks will stay, but new syncs won't add more from this course.`)) return;
     await fetch('/api/canvas/course-mappings/' + encodeURIComponent(code), { method: 'DELETE' });
     loadMappings();
   }
