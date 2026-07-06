@@ -181,6 +181,7 @@ def handle_voice_reply(raw, host_url):
 
     if raw.startswith("TASK|") or raw.startswith("ADD_TASK|"):
         _, title, family, project = raw.split("|", 3)
+        project = project.strip() or family.strip() or "general"
         color = get_or_create_project(project, family)
         db.execute(
             "INSERT INTO tasks (title,status,project,family,color,created_at) VALUES (?,?,?,?,?,?)",
