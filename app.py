@@ -287,6 +287,7 @@ def login():
         email    = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '')
         db = get_db()
+        remember = request.form.get('remember') == 'on'
         if mode == 'register':
             if db.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone():
                 flash('An account with that email already exists.', 'error')
@@ -297,7 +298,7 @@ def login():
             )
             db.commit()
             row = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-            login_user(User(row['id'], row['email'], row['name']))
+            login_user(User(row['id'], row['email'], row['name']), remember=remember)
             return redirect('/')
         else:
             row = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
@@ -305,7 +306,7 @@ def login():
                not check_password_hash(row['password_hash'], password):
                 flash('Invalid email or password.', 'error')
                 return redirect('/login')
-            login_user(User(row['id'], row['email'], row['name']))
+            login_user(User(row['id'], row['email'], row['name']), remember=remember)
             return redirect('/')
     return render_template('login.html')
 

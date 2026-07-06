@@ -71,6 +71,10 @@
       <input type="email" name="email" required autocomplete="email" />
       <label>Password</label>
       <input type="password" name="password" required autocomplete="current-password" />
+      <div style="display:flex;align-items:center;gap:8px;margin-top:14px">
+        <input type="checkbox" name="remember" id="remember" style="width:auto;accent-color:var(--accent)">
+        <label for="remember" style="margin:0;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text-muted);cursor:pointer">Remember me</label>
+      </div>
       <button class="btn" type="submit">Sign In</button>
     </form>
     <div class="toggle">No account? <a onclick="showRegister()">Create one</a></div>
