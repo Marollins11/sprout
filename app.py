@@ -724,7 +724,7 @@ def voice_command():
         return jsonify({"reply": reply, "action": action})
     except Exception as e:
         print(f"[voice error] {traceback.format_exc()}", flush=True)
-        return jsonify({"reply": f"Sorry, something went wrong: {type(e).__name__}: {e}", "action": {}})
+        return jsonify({"reply": f"Sorry, something went wrong: {type(e).__name__}: {e}", "action": {}, "error": True})
 
 
 # ── Calendar accounts ─────────────────────────────────────────────────────────
