@@ -60,8 +60,10 @@
 
       if (reply) {
         statusEl.textContent = 'Sprout: ' + reply;
-        const utt = new SpeechSynthesisUtterance(reply);
-        window.speechSynthesis.speak(utt);
+        if (!data.error) {
+          const utt = new SpeechSynthesisUtterance(reply);
+          window.speechSynthesis.speak(utt);
+        }
       }
 
       if (action.type === 'FILTER') {
