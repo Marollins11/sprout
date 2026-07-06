@@ -65,7 +65,7 @@ _chat_sessions = {}
 def get_chat(sid):
     if sid not in _chat_sessions:
         _chat_sessions[sid] = get_genai_client().chats.create(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             config={"system_instruction": VOICE_SYSTEM}
         )
     return _chat_sessions[sid]
