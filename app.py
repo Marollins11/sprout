@@ -712,15 +712,19 @@ def voice_command():
     if not text:
         return jsonify({"reply": "", "action": {}})
 
-    sid = session.get("chat_id")
-    if not sid:
-        sid = secrets.token_hex(8)
-        session["chat_id"] = sid
+    try:
+        sid = session.get("chat_id")
+        if not sid:
+            sid = secrets.token_hex(8)
+            session["chat_id"] = sid
 
-    chat = get_chat(sid)
-    response = chat.send_message(text)
-    reply, action = handle_voice_reply(response.text.strip(), request.host_url)
-    return jsonify({"reply": reply, "action": action})
+        chat = get_chat(sid)
+        response = chat.send_message(text)
+        reply, action = handle_voice_reply(response.text.strip(), request.host_url)
+        return jsonify({"reply": reply, "action": action})
+    except Exception as e:
+        print(f"[voice error] {traceback.format_exc()}", flush=True)
+        return jsonify({"reply": f"Sorry, something went wrong: {type(e).__name__}: {e}", "action": {}})
 
 
 # ── Calendar accounts ─────────────────────────────────────────────────────────

@@ -54,7 +54,9 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text })
       });
-      const { reply, action } = await res.json();
+      const data = await res.json();
+      const reply = data.reply;
+      const action = data.action || {};
 
       if (reply) {
         statusEl.textContent = 'Sprout: ' + reply;
@@ -62,8 +64,7 @@
         window.speechSynthesis.speak(utt);
       }
 
-      // Apply board filter if Gemini returned one
-      if (action && action.type === 'FILTER') {
+      if (action.type === 'FILTER') {
         if (action.family === 'all') {
           setFamilyFilter('all');
         } else {
@@ -72,11 +73,10 @@
         }
       }
 
-      // Refresh board after any task-modifying command
       loadTasks();
 
     } catch (err) {
-      statusEl.textContent = 'Could not reach server.';
+      statusEl.textContent = 'Could not reach server: ' + err;
     }
   };
 
