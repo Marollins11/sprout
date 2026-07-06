@@ -179,7 +179,7 @@ def handle_voice_reply(raw, host_url):
     action = {}
     db = get_db()
 
-    if raw.startswith("TASK|"):
+    if raw.startswith("TASK|") or raw.startswith("ADD_TASK|"):
         _, title, family, project = raw.split("|", 3)
         color = get_or_create_project(project, family)
         db.execute(
