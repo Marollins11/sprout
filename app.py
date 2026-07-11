@@ -93,7 +93,8 @@ def init_db():
         due_date TEXT,
         description TEXT
     )""")
-    for col, defn in [("due_date", "TEXT"), ("description", "TEXT")]:
+    for col, defn in [("due_date", "TEXT"), ("description", "TEXT"),
+                       ("archived", "INTEGER DEFAULT 0"), ("done_at", "TEXT")]:
         try:
             db.execute(f"ALTER TABLE tasks ADD COLUMN {col} {defn}")
         except Exception:
@@ -419,9 +420,22 @@ def index():
 
 @app.route("/api/tasks")
 def get_tasks():
-    tasks = get_db().execute(
-        "SELECT * FROM tasks ORDER BY flagged DESC, created_at DESC"
-    ).fetchall()
+    db = get_db()
+    db.execute("""
+        UPDATE tasks SET archived=1
+        WHERE status='done' AND (archived IS NULL OR archived=0)
+          AND done_at IS NOT NULL
+          AND julianday('now') - julianday(done_at) > 14
+    """)
+    db.commit()
+    if request.args.get('archived') == '1':
+        tasks = db.execute(
+            "SELECT * FROM tasks WHERE archived=1 ORDER BY done_at DESC, created_at DESC"
+        ).fetchall()
+    else:
+        tasks = db.execute(
+            "SELECT * FROM tasks WHERE archived IS NULL OR archived=0 ORDER BY flagged DESC, created_at DESC"
+        ).fetchall()
     return jsonify([dict(t) for t in tasks])
 
 
@@ -444,7 +458,18 @@ def add_task():
 def update_task(tid):
     d = request.json
     db = get_db()
-    if "status"      in d: db.execute("UPDATE tasks SET status=?      WHERE id=?", (d["status"], tid))
+    if "status" in d:
+        new_status = d["status"]
+        db.execute("UPDATE tasks SET status=? WHERE id=?", (new_status, tid))
+        if new_status == "done":
+            db.execute("UPDATE tasks SET done_at=? WHERE id=?", (datetime.now().isoformat(), tid))
+        else:
+            db.execute("UPDATE tasks SET done_at=NULL WHERE id=?", (tid,))
+    if "archived" in d:
+        db.execute("UPDATE tasks SET archived=? WHERE id=?", (d["archived"], tid))
+        if d["archived"] == 0:
+            db.execute("UPDATE tasks SET status='done', done_at=? WHERE id=?",
+                       (datetime.now().isoformat(), tid))
     if "flagged"     in d: db.execute("UPDATE tasks SET flagged=?     WHERE id=?", (d["flagged"], tid))
     if "due_date"    in d: db.execute("UPDATE tasks SET due_date=?    WHERE id=?", (d["due_date"], tid))
     if "description" in d: db.execute("UPDATE tasks SET description=? WHERE id=?", (d["description"], tid))

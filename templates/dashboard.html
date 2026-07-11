@@ -124,6 +124,25 @@
     .card-due  { font-size: 11px; color: var(--text-faint); white-space: nowrap; flex-shrink: 0; }
     .col-body.drag-over { outline: 2px dashed var(--accent); border-radius: 8px; background: var(--surface-btn); }
     .card.dragging { opacity: 0.35; }
+    /* Collapse + archive */
+    .col-collapse-btn { background: none; border: none; cursor: pointer; font-size: 15px;
+      color: var(--text-faint); padding: 1px 5px; border-radius: 4px; line-height: 1;
+      transition: color 0.15s, background 0.15s; flex-shrink: 0; }
+    .col-collapse-btn:hover { color: var(--text); background: var(--border); }
+    .column.collapsed { flex: 0 0 44px; min-width: 44px; overflow: hidden; }
+    .column.collapsed .col-body { display: none; }
+    .column.collapsed .col-header { writing-mode: vertical-rl; justify-content: flex-start;
+      padding: 10px 8px; gap: 6px; cursor: pointer; }
+    .column.collapsed .col-header .col-count { writing-mode: horizontal-tb; }
+    .column.collapsed .col-collapse-btn { writing-mode: horizontal-tb; }
+    .col-archive { flex: 1; min-width: 260px; max-width: 400px; display: none;
+      flex-direction: column; opacity: 0.75; }
+    .col-archive.show { display: flex; }
+    .archive-toggle-btn { padding: 4px 12px; border-radius: 20px; font-size: 12px; cursor: pointer;
+      border: 1px solid var(--border); background: none; color: var(--text-muted);
+      transition: all 0.15s; }
+    .archive-toggle-btn:hover { border-color: var(--accent); color: var(--text); }
+    .archive-toggle-btn.active { background: #374151; color: #fff; border-color: transparent; }
     /* Detail modal */
     .detail-modal { background: var(--surface); border-radius: 12px; padding: 24px;
                     width: 540px; max-width: 92vw; max-height: 82vh; overflow-y: auto;
@@ -317,6 +336,7 @@
     <div id="project-filters" style="display:flex;gap:6px;flex-wrap:wrap"></div>
     <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
       <button class="filter-pill" id="sort-btn" onclick="toggleDueSort()">Due ↑</button>
+      <button class="archive-toggle-btn" id="archive-toggle-btn" onclick="toggleArchiveView()">Archived</button>
       <button class="add-task-btn" style="margin-left:0" onclick="openModal()">+ Add Task</button>
     </div>
   </div>
@@ -332,10 +352,17 @@
       <div class="col-body" id="col-inprog"
            ondragover="colDragOver(event)" ondragleave="colDragLeave(event)" ondrop="colDrop(event,'in_progress')"></div>
     </div>
-    <div class="column">
-      <div class="col-header">Done <span class="col-count" id="count-done">0</span></div>
+    <div class="column" id="col-done-wrapper">
+      <div class="col-header" onclick="if(document.getElementById('col-done-wrapper').classList.contains('collapsed'))toggleDoneCollapse()">
+        <span>Done <span class="col-count" id="count-done">0</span></span>
+        <button class="col-collapse-btn" id="done-collapse-btn" onclick="event.stopPropagation();toggleDoneCollapse()" title="Collapse">‹</button>
+      </div>
       <div class="col-body" id="col-done"
            ondragover="colDragOver(event)" ondragleave="colDragLeave(event)" ondrop="colDrop(event,'done')"></div>
+    </div>
+    <div class="col-archive" id="col-archive-wrapper">
+      <div class="col-header">Archived <span class="col-count" id="count-archived">0</span></div>
+      <div class="col-body" id="col-archived"></div>
     </div>
   </div>
 </div>
@@ -568,8 +595,10 @@
           <button class="card-btn ${t.flagged ? 'on' : ''}" title="${t.flagged ? 'Remove flag' : 'Flag'}"
             onclick="toggleFlag(${t.id}, ${t.flagged})">&#x1F6A9;</button>
           <button class="card-btn" title="Delete" onclick="deleteCard(${t.id})">&#x1F5D1;</button>
-          <button class="card-btn" title="Move to ${nextLabel}"
-            onclick="advanceCard(${t.id},'${nextStatus}')">&#8250;</button>
+          ${t.status === 'done'
+            ? `<button class="card-btn" title="Archive" onclick="archiveCard(${t.id})">&#x1F4E5;</button>`
+            : `<button class="card-btn" title="Move to ${nextLabel}" onclick="advanceCard(${t.id},'${nextStatus}')">&#8250;</button>`
+          }
         </div>
       </div>
     </div>`;
@@ -731,6 +760,7 @@
     if (!confirm('Delete this task?')) return;
     await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
     loadTasks();
+    if (showArchive) loadArchivedTasks();
   }
 
   function renderProjectFilters() {
@@ -1121,8 +1151,79 @@
     }
   }
 
+  // ── Archive ──
+  let archivedTasks = [];
+  let showArchive = false;
+
+  async function toggleArchiveView() {
+    showArchive = !showArchive;
+    document.getElementById('archive-toggle-btn').classList.toggle('active', showArchive);
+    document.getElementById('col-archive-wrapper').classList.toggle('show', showArchive);
+    if (showArchive) await loadArchivedTasks();
+  }
+
+  async function loadArchivedTasks() {
+    const r = await fetch('/api/tasks?archived=1');
+    archivedTasks = await r.json();
+    renderArchiveCol();
+  }
+
+  function renderArchiveCol() {
+    document.getElementById('count-archived').textContent = archivedTasks.length;
+    document.getElementById('col-archived').innerHTML = archivedTasks.map(t => `
+      <div class="card">
+        <div class="card-title">${esc(t.title)}</div>
+        ${t.description ? `<div class="card-desc">${esc(t.description)}</div>` : ''}
+        <div class="card-meta">
+          <span class="card-badge" style="background:${esc(t.color)}">${esc(t.project)}</span>
+          <div class="card-actions" onclick="event.stopPropagation()">
+            <button class="card-btn" title="Restore to Done" onclick="restoreCard(${t.id})">&#x21A9;</button>
+            <button class="card-btn" title="Delete" onclick="deleteCard(${t.id})">&#x1F5D1;</button>
+          </div>
+        </div>
+      </div>`).join('');
+  }
+
+  async function archiveCard(id) {
+    await fetch(`/api/tasks/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ archived: 1 })
+    });
+    loadTasks();
+    if (showArchive) loadArchivedTasks();
+  }
+
+  async function restoreCard(id) {
+    await fetch(`/api/tasks/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ archived: 0 })
+    });
+    loadArchivedTasks();
+    loadTasks();
+  }
+
+  // ── Done column collapse ──
+  let doneCollapsed = localStorage.getItem('done-collapsed') === '1';
+
+  function toggleDoneCollapse() {
+    doneCollapsed = !doneCollapsed;
+    localStorage.setItem('done-collapsed', doneCollapsed ? '1' : '0');
+    applyDoneCollapse();
+  }
+
+  function applyDoneCollapse() {
+    const col = document.getElementById('col-done-wrapper');
+    const btn = document.getElementById('done-collapse-btn');
+    col.classList.toggle('collapsed', doneCollapsed);
+    btn.textContent = doneCollapsed ? '›' : '‹';
+    btn.title = doneCollapsed ? 'Expand' : 'Collapse';
+  }
+
   // ── Init ──
   loadTasks();
+  applyDoneCollapse();
   setInterval(loadTasks, 10000);
 
   // Auto-switch to Accounts tab after OAuth redirect
