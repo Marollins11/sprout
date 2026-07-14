@@ -448,6 +448,11 @@ def google_login_callback():
 
 # ── Core routes ───────────────────────────────────────────────────────────────
 
+@app.route("/api/whoami")
+def whoami():
+    return jsonify({"id": current_user.id, "email": current_user.email})
+
+
 @app.route("/")
 def index():
     return render_template("dashboard.html")
