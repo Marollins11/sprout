@@ -170,7 +170,7 @@ def init_db():
         db.execute("ALTER TABLE course_mappings ADD COLUMN color TEXT")
     except Exception:
         pass
-    db.execute("INSERT OR IGNORE INTO projects VALUES (1,'personal','personal','#6B21A8')")
+    db.execute("INSERT OR IGNORE INTO projects (id,user_id,name,family,color) VALUES (1,0,'personal','personal','#6B21A8')")
     db.commit()
 
 
