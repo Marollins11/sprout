@@ -6,10 +6,15 @@ import os as _os
 DB = _os.getenv("DATABASE_PATH", "tasks.db")
 
 
-def get_active_accounts():
+def get_active_accounts(user_id=None):
     db = sqlite3.connect(DB)
     db.row_factory = sqlite3.Row
-    rows = db.execute("SELECT * FROM calendar_accounts WHERE active=1").fetchall()
+    if user_id is not None:
+        rows = db.execute(
+            "SELECT * FROM calendar_accounts WHERE active=1 AND user_id=?", (user_id,)
+        ).fetchall()
+    else:
+        rows = db.execute("SELECT * FROM calendar_accounts WHERE active=1").fetchall()
     db.close()
     return [dict(r) for r in rows]
 
@@ -121,9 +126,9 @@ _HANDLERS = {
 }
 
 
-def get_all_events():
+def get_all_events(user_id=None):
     events = []
-    for account in get_active_accounts():
+    for account in get_active_accounts(user_id=user_id):
         fn = _HANDLERS.get(account["type"])
         if not fn:
             continue

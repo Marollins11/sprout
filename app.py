@@ -94,29 +94,56 @@ def init_db():
         description TEXT
     )""")
     for col, defn in [("due_date", "TEXT"), ("description", "TEXT"),
-                       ("archived", "INTEGER DEFAULT 0"), ("done_at", "TEXT")]:
+                       ("archived", "INTEGER DEFAULT 0"), ("done_at", "TEXT"),
+                       ("user_id", "INTEGER")]:
         try:
             db.execute(f"ALTER TABLE tasks ADD COLUMN {col} {defn}")
         except Exception:
             pass
-    db.execute("""CREATE TABLE IF NOT EXISTS projects (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE NOT NULL,
-        family TEXT NOT NULL,
-        color TEXT NOT NULL
-    )""")
+    # Projects: recreate with per-user unique constraint if needed
+    proj_cols = [r[1] for r in db.execute("PRAGMA table_info(projects)").fetchall()]
+    if 'user_id' not in proj_cols:
+        db.execute("DROP TABLE IF EXISTS projects")
+        db.execute("""CREATE TABLE projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 0,
+            name TEXT NOT NULL,
+            family TEXT NOT NULL,
+            color TEXT NOT NULL,
+            UNIQUE(user_id, name)
+        )""")
+    else:
+        db.execute("""CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 0,
+            name TEXT NOT NULL,
+            family TEXT NOT NULL,
+            color TEXT NOT NULL,
+            UNIQUE(user_id, name)
+        )""")
     db.execute("""CREATE TABLE IF NOT EXISTS reminders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        time TEXT, task TEXT, fired INTEGER DEFAULT 0
+        time TEXT, task TEXT, fired INTEGER DEFAULT 0, user_id INTEGER
     )""")
+    for col, defn in [("user_id", "INTEGER")]:
+        try:
+            db.execute(f"ALTER TABLE reminders ADD COLUMN {col} {defn}")
+        except Exception:
+            pass
     db.execute("""CREATE TABLE IF NOT EXISTS calendar_accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
         label TEXT NOT NULL,
         credentials TEXT,
         active INTEGER DEFAULT 1,
-        created_at TEXT
+        created_at TEXT,
+        user_id INTEGER
     )""")
+    for col, defn in [("user_id", "INTEGER")]:
+        try:
+            db.execute(f"ALTER TABLE calendar_accounts ADD COLUMN {col} {defn}")
+        except Exception:
+            pass
     db.execute("""CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         email TEXT UNIQUE NOT NULL,
@@ -147,18 +174,25 @@ def init_db():
     db.commit()
 
 
-def get_or_create_project(name, family, db=None):
+def get_or_create_project(name, family, db=None, uid=None):
     global auto_idx
     _own = db is None
     db = db or get_db()
     nm = name.lower().strip()
     fm = (family or "").lower().strip()
-    row = db.execute("SELECT color FROM projects WHERE name=?", (nm,)).fetchone()
+    if uid is not None:
+        row = db.execute("SELECT color FROM projects WHERE name=? AND user_id=?", (nm, uid)).fetchone()
+    else:
+        row = db.execute("SELECT color FROM projects WHERE name=?", (nm,)).fetchone()
     if row:
         return row["color"]
     if fm in FAMILY_PALETTES:
-        used = [r["color"] for r in db.execute(
-            "SELECT color FROM projects WHERE family=?", (fm,)).fetchall()]
+        if uid is not None:
+            used = [r["color"] for r in db.execute(
+                "SELECT color FROM projects WHERE family=? AND user_id=?", (fm, uid)).fetchall()]
+        else:
+            used = [r["color"] for r in db.execute(
+                "SELECT color FROM projects WHERE family=?", (fm,)).fetchall()]
         pal = FAMILY_PALETTES[fm]
         color = next((c for c in pal if c not in used), pal[-1])
     else:
@@ -166,8 +200,9 @@ def get_or_create_project(name, family, db=None):
         auto_idx += 1
         if fm:
             FAMILY_PALETTES[fm] = [color]
-    db.execute("INSERT OR IGNORE INTO projects (name,family,color) VALUES (?,?,?)",
-               (nm, fm or "other", "#" + color))
+    effective_uid = uid if uid is not None else 0
+    db.execute("INSERT OR IGNORE INTO projects (user_id,name,family,color) VALUES (?,?,?,?)",
+               (effective_uid, nm, fm or "other", "#" + color))
     if _own:
         db.commit()
     return "#" + color
@@ -175,7 +210,7 @@ def get_or_create_project(name, family, db=None):
 
 # ── Voice command handler ────────────────────────────────────────────────────
 
-def handle_voice_reply(raw, host_url):
+def handle_voice_reply(raw, host_url, uid=None):
     """Execute a Gemini structured reply against the DB. Returns (spoken_text, action)."""
     action = {}
     db = get_db()
@@ -183,10 +218,10 @@ def handle_voice_reply(raw, host_url):
     if raw.startswith("TASK|") or raw.startswith("ADD_TASK|"):
         _, title, family, project = raw.split("|", 3)
         project = project.strip() or family.strip() or "general"
-        color = get_or_create_project(project, family)
+        color = get_or_create_project(project, family, uid=uid)
         db.execute(
-            "INSERT INTO tasks (title,status,project,family,color,created_at) VALUES (?,?,?,?,?,?)",
-            (title, "todo", project.lower(), family.lower(), color, datetime.now().isoformat())
+            "INSERT INTO tasks (title,status,project,family,color,created_at,user_id) VALUES (?,?,?,?,?,?,?)",
+            (title, "todo", project.lower(), family.lower(), color, datetime.now().isoformat(), uid)
         )
         db.commit()
         return f"Added {title} to {project}.", action
@@ -194,25 +229,25 @@ def handle_voice_reply(raw, host_url):
     if raw.startswith("MOVE_STATUS|"):
         _, match, status = raw.split("|", 2)
         task = db.execute(
-            "SELECT id FROM tasks WHERE instr(lower(title), ?) > 0", (match.lower(),)
+            "SELECT id FROM tasks WHERE instr(lower(title), ?) > 0 AND user_id=?", (match.lower(), uid)
         ).fetchone()
         if not task:
             return "I couldn't find that task.", action
-        db.execute("UPDATE tasks SET status=? WHERE id=?", (status, task["id"]))
+        db.execute("UPDATE tasks SET status=? WHERE id=? AND user_id=?", (status, task["id"], uid))
         db.commit()
         return f"Moved to {status.replace('_', ' ')}.", action
 
     if raw.startswith("MOVE_PROJECT|"):
         _, match, family, project = raw.split("|", 3)
         task = db.execute(
-            "SELECT id FROM tasks WHERE instr(lower(title), ?) > 0", (match.lower(),)
+            "SELECT id FROM tasks WHERE instr(lower(title), ?) > 0 AND user_id=?", (match.lower(), uid)
         ).fetchone()
         if not task:
             return "I couldn't find that task.", action
-        color = get_or_create_project(project, family)
+        color = get_or_create_project(project, family, uid=uid)
         db.execute(
-            "UPDATE tasks SET project=?,family=?,color=? WHERE id=?",
-            (project.lower(), family.lower(), color, task["id"])
+            "UPDATE tasks SET project=?,family=?,color=? WHERE id=? AND user_id=?",
+            (project.lower(), family.lower(), color, task["id"], uid)
         )
         db.commit()
         return f"Moved to {project}.", action
@@ -220,11 +255,11 @@ def handle_voice_reply(raw, host_url):
     if raw.startswith("FLAG|"):
         _, match, flagged = raw.split("|", 2)
         task = db.execute(
-            "SELECT id FROM tasks WHERE instr(lower(title), ?) > 0", (match.lower(),)
+            "SELECT id FROM tasks WHERE instr(lower(title), ?) > 0 AND user_id=?", (match.lower(), uid)
         ).fetchone()
         if not task:
             return "I couldn't find that task.", action
-        db.execute("UPDATE tasks SET flagged=? WHERE id=?", (int(flagged), task["id"]))
+        db.execute("UPDATE tasks SET flagged=? WHERE id=? AND user_id=?", (int(flagged), task["id"], uid))
         db.commit()
         return "Flagged." if flagged == "1" else "Flag removed.", action
 
@@ -235,7 +270,7 @@ def handle_voice_reply(raw, host_url):
 
     if raw.startswith("REMINDER|"):
         _, t, task_desc = raw.split("|", 2)
-        db.execute("INSERT INTO reminders (time,task) VALUES (?,?)", (t, task_desc))
+        db.execute("INSERT INTO reminders (time,task,user_id) VALUES (?,?,?)", (t, task_desc, uid))
         db.commit()
         return f"Reminder set for {t}.", action
 
@@ -421,20 +456,23 @@ def index():
 @app.route("/api/tasks")
 def get_tasks():
     db = get_db()
+    uid = current_user.id
     db.execute("""
         UPDATE tasks SET archived=1
         WHERE status='done' AND (archived IS NULL OR archived=0)
-          AND done_at IS NOT NULL
+          AND done_at IS NOT NULL AND user_id=?
           AND julianday('now') - julianday(done_at) > 14
-    """)
+    """, (uid,))
     db.commit()
     if request.args.get('archived') == '1':
         tasks = db.execute(
-            "SELECT * FROM tasks WHERE archived=1 ORDER BY done_at DESC, created_at DESC"
+            "SELECT * FROM tasks WHERE archived=1 AND user_id=? ORDER BY done_at DESC, created_at DESC",
+            (uid,)
         ).fetchall()
     else:
         tasks = db.execute(
-            "SELECT * FROM tasks WHERE archived IS NULL OR archived=0 ORDER BY flagged DESC, created_at DESC"
+            "SELECT * FROM tasks WHERE (archived IS NULL OR archived=0) AND user_id=? ORDER BY flagged DESC, created_at DESC",
+            (uid,)
         ).fetchall()
     return jsonify([dict(t) for t in tasks])
 
@@ -442,13 +480,14 @@ def get_tasks():
 @app.route("/api/tasks", methods=["POST"])
 def add_task():
     d = request.json
-    color = get_or_create_project(d.get("project", "personal"), d.get("family", "personal"))
+    uid = current_user.id
+    color = get_or_create_project(d.get("project", "personal"), d.get("family", "personal"), uid=uid)
     db = get_db()
     db.execute(
-        "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description) VALUES (?,?,?,?,?,?,?,?)",
+        "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description,user_id) VALUES (?,?,?,?,?,?,?,?,?)",
         (d["title"], "todo", d.get("project", "personal").lower(),
          d.get("family", "personal").lower(), color, datetime.now().isoformat(),
-         d.get("due_date"), d.get("description"))
+         d.get("due_date"), d.get("description"), uid)
     )
     db.commit()
     return jsonify({"ok": True, "color": color})
@@ -458,26 +497,27 @@ def add_task():
 def update_task(tid):
     d = request.json
     db = get_db()
+    uid = current_user.id
     if "status" in d:
         new_status = d["status"]
-        db.execute("UPDATE tasks SET status=? WHERE id=?", (new_status, tid))
+        db.execute("UPDATE tasks SET status=? WHERE id=? AND user_id=?", (new_status, tid, uid))
         if new_status == "done":
-            db.execute("UPDATE tasks SET done_at=? WHERE id=?", (datetime.now().isoformat(), tid))
+            db.execute("UPDATE tasks SET done_at=? WHERE id=? AND user_id=?", (datetime.now().isoformat(), tid, uid))
         else:
-            db.execute("UPDATE tasks SET done_at=NULL WHERE id=?", (tid,))
+            db.execute("UPDATE tasks SET done_at=NULL WHERE id=? AND user_id=?", (tid, uid))
     if "archived" in d:
-        db.execute("UPDATE tasks SET archived=? WHERE id=?", (d["archived"], tid))
+        db.execute("UPDATE tasks SET archived=? WHERE id=? AND user_id=?", (d["archived"], tid, uid))
         if d["archived"] == 0:
-            db.execute("UPDATE tasks SET status='done', done_at=? WHERE id=?",
-                       (datetime.now().isoformat(), tid))
-    if "flagged"     in d: db.execute("UPDATE tasks SET flagged=?     WHERE id=?", (d["flagged"], tid))
-    if "due_date"    in d: db.execute("UPDATE tasks SET due_date=?    WHERE id=?", (d["due_date"], tid))
-    if "description" in d: db.execute("UPDATE tasks SET description=? WHERE id=?", (d["description"], tid))
-    if "title"       in d: db.execute("UPDATE tasks SET title=?       WHERE id=?", (d["title"], tid))
+            db.execute("UPDATE tasks SET status='done', done_at=? WHERE id=? AND user_id=?",
+                       (datetime.now().isoformat(), tid, uid))
+    if "flagged"     in d: db.execute("UPDATE tasks SET flagged=?     WHERE id=? AND user_id=?", (d["flagged"], tid, uid))
+    if "due_date"    in d: db.execute("UPDATE tasks SET due_date=?    WHERE id=? AND user_id=?", (d["due_date"], tid, uid))
+    if "description" in d: db.execute("UPDATE tasks SET description=? WHERE id=? AND user_id=?", (d["description"], tid, uid))
+    if "title"       in d: db.execute("UPDATE tasks SET title=?       WHERE id=? AND user_id=?", (d["title"], tid, uid))
     if "project" in d:
-        color = get_or_create_project(d["project"], d.get("family", ""))
-        db.execute("UPDATE tasks SET project=?,family=?,color=? WHERE id=?",
-                   (d["project"], d.get("family", ""), color, tid))
+        color = get_or_create_project(d["project"], d.get("family", ""), uid=uid)
+        db.execute("UPDATE tasks SET project=?,family=?,color=? WHERE id=? AND user_id=?",
+                   (d["project"], d.get("family", ""), color, tid, uid))
     db.commit()
     return jsonify({"ok": True})
 
@@ -485,14 +525,16 @@ def update_task(tid):
 @app.route("/api/tasks/<int:tid>", methods=["DELETE"])
 def delete_task(tid):
     db = get_db()
-    db.execute("DELETE FROM tasks WHERE id=?", (tid,))
+    db.execute("DELETE FROM tasks WHERE id=? AND user_id=?", (tid, current_user.id))
     db.commit()
     return jsonify({"ok": True})
 
 
 @app.route("/api/projects")
 def get_projects():
-    rows = get_db().execute("SELECT * FROM projects ORDER BY family,name").fetchall()
+    rows = get_db().execute(
+        "SELECT * FROM projects WHERE user_id=? ORDER BY family,name", (current_user.id,)
+    ).fetchall()
     return jsonify([dict(r) for r in rows])
 
 
@@ -500,7 +542,7 @@ def get_projects():
 def add_reminder():
     d = request.json
     db = get_db()
-    db.execute("INSERT INTO reminders (time,task) VALUES (?,?)", (d["time"], d["task"]))
+    db.execute("INSERT INTO reminders (time,task,user_id) VALUES (?,?,?)", (d["time"], d["task"], current_user.id))
     db.commit()
     return jsonify({"ok": True})
 
@@ -510,7 +552,7 @@ def pending_reminders():
     now = datetime.now().strftime("%H:%M")
     db = get_db()
     rows = db.execute(
-        "SELECT id, task FROM reminders WHERE time=? AND fired=0", (now,)
+        "SELECT id, task FROM reminders WHERE time=? AND fired=0 AND user_id=?", (now, current_user.id)
     ).fetchall()
     for row in rows:
         db.execute("UPDATE reminders SET fired=1 WHERE id=?", (row["id"],))
@@ -521,7 +563,7 @@ def pending_reminders():
 @app.route("/api/events")
 def get_events():
     from calendar_sync import get_all_events
-    events = get_all_events()
+    events = get_all_events(user_id=current_user.id)
     try:
         from canvas_sync import get_canvas_events_for_calendar
         events += get_canvas_events_for_calendar()
@@ -642,8 +684,8 @@ def update_mapping_color():
     )
     if row:
         nm = row["course_name"].lower().strip()
-        db.execute("UPDATE projects SET color=? WHERE name=?", (color, nm))
-        db.execute("UPDATE tasks SET color=? WHERE LOWER(project)=?", (color, nm))
+        db.execute("UPDATE projects SET color=? WHERE name=? AND user_id=?", (color, nm, current_user.id))
+        db.execute("UPDATE tasks SET color=? WHERE LOWER(project)=? AND user_id=?", (color, nm, current_user.id))
     db.commit()
     return jsonify({"ok": True})
 
@@ -680,8 +722,8 @@ def delete_course_mapping(code):
                (current_user.id, code))
     if row:
         nm = row["course_name"].lower().strip()
-        db.execute("DELETE FROM tasks WHERE LOWER(project)=?", (nm,))
-        db.execute("DELETE FROM projects WHERE LOWER(name)=?", (nm,))
+        db.execute("DELETE FROM tasks WHERE LOWER(project)=? AND user_id=?", (nm, current_user.id))
+        db.execute("DELETE FROM projects WHERE LOWER(name)=? AND user_id=?", (nm, current_user.id))
     db.commit()
     return jsonify({"ok": True})
 
@@ -698,7 +740,10 @@ def sync_canvas_ical_now():
             return jsonify({"ok": False, "error": "No Canvas feed configured"}), 400
         mappings = _get_user_mappings(db)
         events = fetch_ical_events(row["url"], mappings=mappings)
-        existing = {t["title"] for t in db.execute("SELECT title FROM tasks").fetchall()}
+        uid = current_user.id
+        existing = {t["title"] for t in db.execute(
+            "SELECT title FROM tasks WHERE user_id=?", (uid,)
+        ).fetchall()}
         SKIP_PATTERNS = ("class session", "class meeting", "lecture", "office hours")
         added = 0
         skipped_session = 0
@@ -711,12 +756,12 @@ def sync_canvas_ical_now():
             if title in existing:
                 skipped_dupe += 1
                 continue
-            color = get_or_create_project(e["course"], "school", db=db)
+            color = get_or_create_project(e["course"], "school", db=db, uid=uid)
             db.execute(
-                "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description)"
-                " VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description,user_id)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
                 (title, "todo", e["course"].lower(), "school", color,
-                 datetime.now().isoformat(), e["start"], e.get("description"))
+                 datetime.now().isoformat(), e["start"], e.get("description"), uid)
             )
             existing.add(title)
             added += 1
@@ -747,7 +792,7 @@ def voice_command():
 
         chat = get_chat(sid)
         response = chat.send_message(text)
-        reply, action = handle_voice_reply(response.text.strip(), request.host_url)
+        reply, action = handle_voice_reply(response.text.strip(), request.host_url, uid=current_user.id)
         return jsonify({"reply": reply, "action": action})
     except Exception as e:
         print(f"[voice error] {traceback.format_exc()}", flush=True)
@@ -759,7 +804,8 @@ def voice_command():
 @app.route("/api/calendar/accounts")
 def list_calendar_accounts():
     rows = get_db().execute(
-        "SELECT id, type, label, active FROM calendar_accounts ORDER BY created_at"
+        "SELECT id, type, label, active FROM calendar_accounts WHERE user_id=? ORDER BY created_at",
+        (current_user.id,)
     ).fetchall()
     return jsonify([dict(r) for r in rows])
 
@@ -767,7 +813,7 @@ def list_calendar_accounts():
 @app.route("/api/calendar/accounts/<int:aid>", methods=["DELETE"])
 def delete_calendar_account(aid):
     db = get_db()
-    db.execute("DELETE FROM calendar_accounts WHERE id=?", (aid,))
+    db.execute("DELETE FROM calendar_accounts WHERE id=? AND user_id=?", (aid, current_user.id))
     db.commit()
     return jsonify({"ok": True})
 
@@ -816,8 +862,8 @@ def google_auth_callback():
     email = r.json().get("email", "Google Account")
     db = get_db()
     db.execute(
-        "INSERT INTO calendar_accounts (type,label,credentials,active,created_at) VALUES (?,?,?,1,?)",
-        ("google", email, creds.to_json(), datetime.now().isoformat())
+        "INSERT INTO calendar_accounts (type,label,credentials,active,created_at,user_id) VALUES (?,?,?,1,?,?)",
+        ("google", email, creds.to_json(), datetime.now().isoformat(), current_user.id)
     )
     db.commit()
     return redirect("/?accounts=1")
@@ -871,8 +917,8 @@ def outlook_auth_callback():
     email = info.get("mail") or info.get("userPrincipalName", "Outlook Account")
     db = get_db()
     db.execute(
-        "INSERT INTO calendar_accounts (type,label,credentials,active,created_at) VALUES (?,?,?,1,?)",
-        ("outlook", email, json.dumps(result), datetime.now().isoformat())
+        "INSERT INTO calendar_accounts (type,label,credentials,active,created_at,user_id) VALUES (?,?,?,1,?,?)",
+        ("outlook", email, json.dumps(result), datetime.now().isoformat(), current_user.id)
     )
     db.commit()
     return redirect("/?accounts=1")
@@ -899,9 +945,9 @@ def icloud_auth():
         return jsonify({"ok": False, "error": str(e)}), 400
     db = get_db()
     db.execute(
-        "INSERT INTO calendar_accounts (type,label,credentials,active,created_at) VALUES (?,?,?,1,?)",
+        "INSERT INTO calendar_accounts (type,label,credentials,active,created_at,user_id) VALUES (?,?,?,1,?,?)",
         ("icloud", username, json.dumps({"username": username, "password": password}),
-         datetime.now().isoformat())
+         datetime.now().isoformat(), current_user.id)
     )
     db.commit()
     return jsonify({"ok": True})
