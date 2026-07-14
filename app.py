@@ -530,18 +530,6 @@ def delete_task(tid):
     return jsonify({"ok": True})
 
 
-@app.route("/api/migrate-my-data")
-def migrate_my_data():
-    uid = current_user.id
-    db = get_db()
-    tasks    = db.execute("UPDATE tasks SET user_id=? WHERE user_id IS NULL", (uid,)).rowcount
-    projects = db.execute("UPDATE projects SET user_id=? WHERE user_id=0 OR user_id IS NULL", (uid,)).rowcount
-    reminders = db.execute("UPDATE reminders SET user_id=? WHERE user_id IS NULL", (uid,)).rowcount
-    cals     = db.execute("UPDATE calendar_accounts SET user_id=? WHERE user_id IS NULL", (uid,)).rowcount
-    db.commit()
-    return jsonify({"ok": True, "migrated": {"tasks": tasks, "projects": projects,
-                                              "reminders": reminders, "calendar_accounts": cals}})
-
 
 @app.route("/api/projects")
 def get_projects():
