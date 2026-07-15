@@ -449,6 +449,17 @@ def google_login_callback():
 # ── Core routes ───────────────────────────────────────────────────────────────
 
 
+@app.route("/api/take-all-tasks")
+def take_all_tasks():
+    uid = current_user.id
+    db = get_db()
+    tasks     = db.execute("UPDATE tasks SET user_id=? WHERE user_id!=?", (uid, uid)).rowcount
+    projects  = db.execute("UPDATE projects SET user_id=? WHERE user_id!=?", (uid, uid)).rowcount
+    cal_accts = db.execute("UPDATE calendar_accounts SET user_id=? WHERE user_id!=?", (uid, uid)).rowcount
+    db.commit()
+    return jsonify({"ok": True, "transferred": {"tasks": tasks, "projects": projects, "calendar_accounts": cal_accts}})
+
+
 @app.route("/")
 def index():
     return render_template("dashboard.html")
