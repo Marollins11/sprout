@@ -516,12 +516,13 @@ def update_task(tid):
     if "due_date"    in d: db.execute("UPDATE tasks SET due_date=?    WHERE id=? AND user_id=?", (d["due_date"], tid, uid))
     if "description" in d: db.execute("UPDATE tasks SET description=? WHERE id=? AND user_id=?", (d["description"], tid, uid))
     if "title"       in d: db.execute("UPDATE tasks SET title=?       WHERE id=? AND user_id=?", (d["title"], tid, uid))
+    color = None
     if "project" in d:
         color = get_or_create_project(d["project"], d.get("family", ""), uid=uid)
         db.execute("UPDATE tasks SET project=?,family=?,color=? WHERE id=? AND user_id=?",
                    (d["project"], d.get("family", ""), color, tid, uid))
     db.commit()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "color": color})
 
 
 @app.route("/api/tasks/<int:tid>", methods=["DELETE"])

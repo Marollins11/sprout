@@ -176,6 +176,14 @@
     .detail-date-input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
     .modal input[type="date"] { color-scheme: dark; }
     body.light .modal input[type="date"] { color-scheme: light; }
+    .detail-group-row { display: flex; gap: 8px; }
+    .detail-group-row select, .detail-group-row input {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: 6px 10px; color: var(--text); font-size: 13px; font-family: inherit; }
+    .detail-group-row select { flex: 0 0 auto; }
+    .detail-group-row input { flex: 1; min-width: 0; }
+    .detail-group-row select:focus, .detail-group-row input:focus {
+      outline: 1px solid var(--accent); border-color: var(--accent); }
     .status-btns { display: flex; gap: 6px; }
     .status-btn  { padding: 5px 14px; border-radius: 6px; font-size: 12px; cursor: pointer;
                    border: 1px solid var(--border); background: var(--surface-btn);
@@ -658,6 +666,8 @@
     badge.textContent = t.project;
     badge.style.background = t.color;
     document.getElementById('detail-due-input').value = t.due_date ? t.due_date.slice(0, 10) : '';
+    document.getElementById('detail-family').value = t.family || 'personal';
+    document.getElementById('detail-project').value = t.project || '';
     const descEl = document.getElementById('detail-desc');
     descEl.textContent = t.description || '';
     document.getElementById('detail-desc-edit').value = t.description || '';
@@ -700,6 +710,25 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ due_date: val || null })
     });
+    loadTasks();
+  }
+
+  async function saveDetailGroup() {
+    if (!currentCardId) return;
+    const family  = document.getElementById('detail-family').value;
+    const project = document.getElementById('detail-project').value.trim() || family;
+    document.getElementById('detail-project').value = project;
+    const r = await fetch(`/api/tasks/${currentCardId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project, family })
+    });
+    const data = await r.json();
+    if (data.color) {
+      const badge = document.getElementById('detail-badge');
+      badge.textContent = project;
+      badge.style.background = data.color;
+    }
     loadTasks();
   }
 
@@ -1303,6 +1332,19 @@
       <div class="detail-label">Due Date</div>
       <input type="date" class="detail-date-input" id="detail-due-input"
              onchange="saveDetailDue()" />
+    </div>
+    <div class="detail-section">
+      <div class="detail-label">Group &amp; Sub-project</div>
+      <div class="detail-group-row">
+        <select id="detail-family" onchange="saveDetailGroup()">
+          <option value="personal">Personal</option>
+          <option value="work">Work</option>
+          <option value="school">School</option>
+        </select>
+        <input type="text" id="detail-project" placeholder="Sub-project"
+               onblur="saveDetailGroup()"
+               onkeydown="if(event.key==='Enter')this.blur()" />
+      </div>
     </div>
     <div class="detail-section">
       <div class="detail-label">Status</div>
