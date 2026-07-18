@@ -169,6 +169,11 @@
                         border: 1px solid var(--accent); border-radius: 6px;
                         padding: 10px 12px; resize: vertical; font-family: inherit; }
     .detail-desc-edit:focus { outline: none; }
+    .detail-date-input { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+                         padding: 6px 10px; color: var(--text); font-size: 13px; font-family: inherit;
+                         color-scheme: dark; cursor: pointer; }
+    body.light .detail-date-input { color-scheme: light; }
+    .detail-date-input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
     .status-btns { display: flex; gap: 6px; }
     .status-btn  { padding: 5px 14px; border-radius: 6px; font-size: 12px; cursor: pointer;
                    border: 1px solid var(--border); background: var(--surface-btn);
@@ -646,7 +651,7 @@
     const badge = document.getElementById('detail-badge');
     badge.textContent = t.project;
     badge.style.background = t.color;
-    document.getElementById('detail-due').textContent = t.due_date ? formatDue(t.due_date) : '';
+    document.getElementById('detail-due-input').value = t.due_date ? t.due_date.slice(0, 10) : '';
     const descEl = document.getElementById('detail-desc');
     descEl.textContent = t.description || '';
     document.getElementById('detail-desc-edit').value = t.description || '';
@@ -677,6 +682,17 @@
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title })
+    });
+    loadTasks();
+  }
+
+  async function saveDetailDue() {
+    if (!currentCardId) return;
+    const val = document.getElementById('detail-due-input').value;
+    await fetch(`/api/tasks/${currentCardId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ due_date: val || null })
     });
     loadTasks();
   }
@@ -794,7 +810,7 @@
   function openModal() {
     document.getElementById('task-title').value = '';
     document.getElementById('task-project').value = '';
-    document.getElementById('task-family').value = 'personal';
+    document.getElementById('task-family').value = (familyFilter !== 'all') ? familyFilter : 'personal';
     document.getElementById('task-desc').value = '';
     document.getElementById('modal').classList.add('show');
     setTimeout(() => document.getElementById('task-title').focus(), 50);
@@ -1273,7 +1289,11 @@
     </div>
     <div class="detail-meta">
       <span class="card-badge" id="detail-badge"></span>
-      <span class="card-due" id="detail-due" style="font-size:12px;color:var(--text-muted)"></span>
+    </div>
+    <div class="detail-section">
+      <div class="detail-label">Due Date</div>
+      <input type="date" class="detail-date-input" id="detail-due-input"
+             onchange="saveDetailDue()" />
     </div>
     <div class="detail-section">
       <div class="detail-label">Status</div>
