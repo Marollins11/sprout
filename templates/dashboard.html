@@ -176,6 +176,27 @@
     .detail-date-input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
     .modal input[type="date"] { color-scheme: dark; }
     body.light .modal input[type="date"] { color-scheme: light; }
+    .subtask-item { display: flex; align-items: center; gap: 8px; padding: 5px 0;
+                    border-bottom: 1px solid var(--border-sub); }
+    .subtask-item:last-child { border-bottom: none; }
+    .subtask-item label { display: flex; align-items: center; gap: 8px; cursor: pointer;
+                          flex: 1; font-size: 13px; color: var(--text); }
+    .subtask-item input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
+                                           flex-shrink: 0; cursor: pointer; }
+    .subtask-item .done-text { text-decoration: line-through; color: var(--text-faint); }
+    .subtask-del { background: none; border: none; cursor: pointer; color: var(--text-faint);
+                   font-size: 16px; padding: 0 3px; opacity: 0; transition: opacity 0.15s; line-height: 1; }
+    .subtask-item:hover .subtask-del { opacity: 1; }
+    .subtask-add { display: flex; gap: 6px; margin-top: 8px; }
+    .subtask-add input { flex: 1; background: var(--bg); border: 1px solid var(--border);
+                         border-radius: 6px; padding: 6px 10px; color: var(--text);
+                         font-size: 13px; font-family: inherit; }
+    .subtask-add input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+    .subtask-add button { padding: 6px 12px; background: var(--surface-btn); border: 1px solid var(--border);
+                          border-radius: 6px; color: var(--text-muted); font-size: 12px; cursor: pointer; }
+    .subtask-add button:hover { border-color: var(--accent); color: var(--text); }
+    .subtask-count { font-size: 11px; color: var(--text-faint); background: var(--border);
+                     border-radius: 10px; padding: 1px 7px; flex-shrink: 0; }
     .detail-group-row { display: flex; gap: 8px; }
     .detail-group-row select, .detail-group-row input {
       background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
@@ -610,6 +631,7 @@
       <div class="card-meta">
         <span class="card-badge" style="background:${esc(t.color)}">${esc(t.project)}</span>
         ${dueStr ? `<span class="card-due">${dueStr}</span>` : ''}
+        ${t.subtask_total > 0 ? `<span class="subtask-count">${t.subtask_done}/${t.subtask_total}</span>` : ''}
         <div class="card-actions" onclick="event.stopPropagation()">
           <button class="card-btn ${t.flagged ? 'on' : ''}" title="${t.flagged ? 'Remove flag' : 'Flag'}"
             onclick="toggleFlag(${t.id}, ${t.flagged})">&#x1F6A9;</button>
@@ -678,12 +700,17 @@
     const flagBtn = document.getElementById('detail-flag-btn');
     flagBtn.classList.toggle('on', !!t.flagged);
     flagBtn.innerHTML = t.flagged ? '&#x1F6A9; Flagged' : '&#x1F6A9; Flag';
+    document.getElementById('subtask-list').innerHTML = '';
+    document.getElementById('subtask-progress').textContent = '';
+    document.getElementById('subtask-input').value = '';
     document.getElementById('card-modal').classList.add('show');
+    loadSubtasks();
   }
 
   function closeCard() {
     document.getElementById('card-modal').classList.remove('show');
     currentCardId = null;
+    currentSubtasks = [];
   }
 
   function handleCardModalClick(e) {
@@ -1205,6 +1232,62 @@
     }
   }
 
+  // ── Subtasks ──
+  let currentSubtasks = [];
+
+  async function loadSubtasks() {
+    if (!currentCardId) return;
+    const r = await fetch(`/api/tasks/${currentCardId}/subtasks`);
+    currentSubtasks = await r.json();
+    renderSubtasks();
+  }
+
+  function renderSubtasks() {
+    const total = currentSubtasks.length;
+    const done  = currentSubtasks.filter(s => s.completed).length;
+    document.getElementById('subtask-progress').textContent = total ? `${done}/${total}` : '';
+    document.getElementById('subtask-list').innerHTML = currentSubtasks.map(s => `
+      <div class="subtask-item">
+        <label>
+          <input type="checkbox" ${s.completed ? 'checked' : ''}
+                 onchange="toggleSubtask(${s.id}, this.checked)" />
+          <span class="${s.completed ? 'done-text' : ''}">${esc(s.title)}</span>
+        </label>
+        <button class="subtask-del" onclick="deleteSubtask(${s.id})" title="Remove">&#x2715;</button>
+      </div>`).join('');
+  }
+
+  async function addSubtask() {
+    if (!currentCardId) return;
+    const inp = document.getElementById('subtask-input');
+    const title = inp.value.trim();
+    if (!title) return;
+    await fetch(`/api/tasks/${currentCardId}/subtasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title })
+    });
+    inp.value = '';
+    await loadSubtasks();
+    loadTasks();
+  }
+
+  async function toggleSubtask(sid, completed) {
+    await fetch(`/api/subtasks/${sid}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ completed: completed ? 1 : 0 })
+    });
+    await loadSubtasks();
+    loadTasks();
+  }
+
+  async function deleteSubtask(sid) {
+    await fetch(`/api/subtasks/${sid}`, { method: 'DELETE' });
+    await loadSubtasks();
+    loadTasks();
+  }
+
   // ── Archive ──
   let archivedTasks = [];
   let showArchive = false;
@@ -1360,6 +1443,18 @@
       <textarea id="detail-desc-edit" class="detail-desc-edit"
         placeholder="Add a description…"
         onblur="saveDetailDesc()"></textarea>
+    </div>
+    <div class="detail-section">
+      <div class="detail-label">Subtasks
+        <span id="subtask-progress" style="font-size:10px;color:var(--text-faint);
+          text-transform:none;letter-spacing:0;margin-left:6px"></span>
+      </div>
+      <div id="subtask-list"></div>
+      <div class="subtask-add">
+        <input type="text" id="subtask-input" placeholder="Add a subtask…"
+               onkeydown="if(event.key==='Enter')addSubtask()" />
+        <button onclick="addSubtask()">Add</button>
+      </div>
     </div>
     <div class="modal-btns">
       <button class="btn btn-secondary" id="detail-flag-btn" onclick="toggleDetailFlag()">&#x1F6A9; Flag</button>

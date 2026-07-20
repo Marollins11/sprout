@@ -170,6 +170,13 @@ def init_db():
         db.execute("ALTER TABLE course_mappings ADD COLUMN color TEXT")
     except Exception:
         pass
+    db.execute("""CREATE TABLE IF NOT EXISTS subtasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        completed INTEGER DEFAULT 0,
+        created_at TEXT
+    )""")
     db.execute("INSERT OR IGNORE INTO projects (id,user_id,name,family,color) VALUES (1,0,'personal','personal','#6B21A8')")
     db.commit()
 
@@ -466,14 +473,18 @@ def get_tasks():
           AND julianday('now') - julianday(done_at) > 14
     """, (uid,))
     db.commit()
+    sub_counts = """
+        (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id) as subtask_total,
+        (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND s.completed=1) as subtask_done
+    """
     if request.args.get('archived') == '1':
         tasks = db.execute(
-            "SELECT * FROM tasks WHERE archived=1 AND user_id=? ORDER BY done_at DESC, created_at DESC",
+            f"SELECT t.*, {sub_counts} FROM tasks t WHERE t.archived=1 AND t.user_id=? ORDER BY t.done_at DESC, t.created_at DESC",
             (uid,)
         ).fetchall()
     else:
         tasks = db.execute(
-            "SELECT * FROM tasks WHERE (archived IS NULL OR archived=0) AND user_id=? ORDER BY flagged DESC, created_at DESC",
+            f"SELECT t.*, {sub_counts} FROM tasks t WHERE (t.archived IS NULL OR t.archived=0) AND t.user_id=? ORDER BY t.flagged DESC, t.created_at DESC",
             (uid,)
         ).fetchall()
     return jsonify([dict(t) for t in tasks])
@@ -528,7 +539,61 @@ def update_task(tid):
 @app.route("/api/tasks/<int:tid>", methods=["DELETE"])
 def delete_task(tid):
     db = get_db()
+    db.execute("DELETE FROM subtasks WHERE task_id=?", (tid,))
     db.execute("DELETE FROM tasks WHERE id=? AND user_id=?", (tid, current_user.id))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/tasks/<int:tid>/subtasks")
+def get_subtasks(tid):
+    db = get_db()
+    task = db.execute("SELECT id FROM tasks WHERE id=? AND user_id=?", (tid, current_user.id)).fetchone()
+    if not task:
+        return jsonify([])
+    rows = db.execute(
+        "SELECT * FROM subtasks WHERE task_id=? ORDER BY created_at", (tid,)
+    ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/tasks/<int:tid>/subtasks", methods=["POST"])
+def add_subtask(tid):
+    db = get_db()
+    task = db.execute("SELECT id FROM tasks WHERE id=? AND user_id=?", (tid, current_user.id)).fetchone()
+    if not task:
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    title = (request.json.get("title") or "").strip()
+    if not title:
+        return jsonify({"ok": False, "error": "Title required"}), 400
+    cur = db.execute(
+        "INSERT INTO subtasks (task_id,title,created_at) VALUES (?,?,?)",
+        (tid, title, datetime.now().isoformat())
+    )
+    db.commit()
+    return jsonify({"ok": True, "id": cur.lastrowid})
+
+
+@app.route("/api/subtasks/<int:sid>", methods=["PATCH"])
+def update_subtask(sid):
+    d = request.json
+    db = get_db()
+    owns = "task_id IN (SELECT id FROM tasks WHERE user_id=?)"
+    if "completed" in d:
+        db.execute(f"UPDATE subtasks SET completed=? WHERE id=? AND {owns}", (d["completed"], sid, current_user.id))
+    if "title" in d:
+        db.execute(f"UPDATE subtasks SET title=? WHERE id=? AND {owns}", (d["title"].strip(), sid, current_user.id))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/subtasks/<int:sid>", methods=["DELETE"])
+def delete_subtask(sid):
+    db = get_db()
+    db.execute(
+        "DELETE FROM subtasks WHERE id=? AND task_id IN (SELECT id FROM tasks WHERE user_id=?)",
+        (sid, current_user.id)
+    )
     db.commit()
     return jsonify({"ok": True})
 
