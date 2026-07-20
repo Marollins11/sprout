@@ -176,16 +176,30 @@
     .detail-date-input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
     .modal input[type="date"] { color-scheme: dark; }
     body.light .modal input[type="date"] { color-scheme: light; }
-    .subtask-item { display: flex; align-items: center; gap: 8px; padding: 5px 0;
+    .subtask-item { display: flex; align-items: center; gap: 6px; padding: 5px 0;
                     border-bottom: 1px solid var(--border-sub); }
     .subtask-item:last-child { border-bottom: none; }
-    .subtask-item label { display: flex; align-items: center; gap: 8px; cursor: pointer;
-                          flex: 1; font-size: 13px; color: var(--text); }
-    .subtask-item input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
-                                           flex-shrink: 0; cursor: pointer; }
     .subtask-item .done-text { text-decoration: line-through; color: var(--text-faint); }
+    .subtask-title { flex: 1; font-size: 13px; color: var(--text); min-width: 0;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .subtask-status-sel { background: var(--surface-btn); border: 1px solid var(--border);
+                          border-radius: 4px; color: var(--text-muted); font-size: 11px;
+                          padding: 2px 4px; cursor: pointer; flex-shrink: 0;
+                          font-family: inherit; max-width: 80px; }
+    .subtask-status-sel:focus { outline: 1px solid var(--accent); }
+    .subtask-date-inp { background: none; border: 1px solid var(--border); border-radius: 4px;
+                        color: var(--text-faint); font-size: 11px; padding: 2px 4px;
+                        font-family: inherit; color-scheme: dark; flex-shrink: 0; width: 108px; cursor: pointer; }
+    body.light .subtask-date-inp { color-scheme: light; }
+    .subtask-date-inp:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+    .subtask-flag-btn { background: none; border: none; cursor: pointer; font-size: 13px;
+                        padding: 2px 4px; border-radius: 4px; opacity: 0.3;
+                        transition: opacity 0.15s; flex-shrink: 0; line-height: 1; }
+    .subtask-flag-btn.on { opacity: 1; }
+    .subtask-flag-btn:hover { opacity: 0.8; background: var(--border); }
     .subtask-del { background: none; border: none; cursor: pointer; color: var(--text-faint);
-                   font-size: 16px; padding: 0 3px; opacity: 0; transition: opacity 0.15s; line-height: 1; }
+                   font-size: 16px; padding: 0 3px; opacity: 0; transition: opacity 0.15s; line-height: 1;
+                   flex-shrink: 0; }
     .subtask-item:hover .subtask-del { opacity: 1; }
     .subtask-add { display: flex; gap: 6px; margin-top: 8px; }
     .subtask-add input { flex: 1; background: var(--bg); border: 1px solid var(--border);
@@ -196,7 +210,23 @@
                           border-radius: 6px; color: var(--text-muted); font-size: 12px; cursor: pointer; }
     .subtask-add button:hover { border-color: var(--accent); color: var(--text); }
     .subtask-count { font-size: 11px; color: var(--text-faint); background: var(--border);
-                     border-radius: 10px; padding: 1px 7px; flex-shrink: 0; }
+                     border-radius: 10px; padding: 1px 7px; flex-shrink: 0;
+                     cursor: pointer; user-select: none; }
+    .subtask-count:hover { color: var(--text); }
+    /* Card inline subtask expansion */
+    .card-subtasks { border-top: 1px solid var(--border-sub); margin-top: 8px;
+                     padding-top: 5px; padding-bottom: 2px; }
+    .card-subtask-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px;
+                        font-size: 11px; color: var(--text-muted); border-radius: 4px;
+                        cursor: pointer; }
+    .card-subtask-row:hover { background: var(--surface-btn); }
+    .subtask-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .subtask-dot.todo { background: var(--text-dim); border: 1px solid var(--text-faint); }
+    .subtask-dot.in_progress { background: #f59e0b; }
+    .subtask-dot.done { background: #22c55e; }
+    .card-subtask-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .card-subtask-title.done-text { text-decoration: line-through; opacity: 0.5; }
+    .card-subtask-due { color: var(--text-faint); white-space: nowrap; flex-shrink: 0; font-size: 10px; }
     .detail-group-row { display: flex; gap: 8px; }
     .detail-group-row select, .detail-group-row input {
       background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
@@ -548,6 +578,7 @@
   let currentCardId = null;
   let dueSortAsc = true;
   const sourcesEnabled = {};
+  const expandedCards = new Set();
   const SOURCE_COLORS = {
     Google: '#2563EB', Outlook: '#0078D4', iCloud: '#6B21A8'
   };
@@ -615,12 +646,28 @@
       document.getElementById(cntId).textContent = cols[status].length;
       document.getElementById(colId).innerHTML = cols[status].map(cardHTML).join('');
     });
+
+    // Re-expand any previously expanded cards
+    expandedCards.forEach(id => {
+      const el    = document.getElementById(`cst-${id}`);
+      const arrow = document.getElementById(`cst-arrow-${id}`);
+      if (!el) { expandedCards.delete(id); return; }
+      el.style.display = 'block';
+      if (arrow) arrow.innerHTML = '&#9662;';
+      fetch(`/api/tasks/${id}/subtasks`)
+        .then(r => r.json())
+        .then(subs => {
+          const c = document.getElementById(`cst-${id}`);
+          if (c) c.innerHTML = subs.map(s => cardSubtaskRowHTML(s, id)).join('');
+        });
+    });
   }
 
   function cardHTML(t) {
     const nextStatus = STATUS_CYCLE[t.status] || 'todo';
     const nextLabel  = STATUS_LABEL[nextStatus];
     const dueStr     = formatDue(t.due_date);
+    const hasSubs    = t.subtask_total > 0;
     return `<div class="card ${t.flagged ? 'flagged' : ''}"
       draggable="true"
       ondragstart="cardDragStart(event,${t.id})"
@@ -631,7 +678,9 @@
       <div class="card-meta">
         <span class="card-badge" style="background:${esc(t.color)}">${esc(t.project)}</span>
         ${dueStr ? `<span class="card-due">${dueStr}</span>` : ''}
-        ${t.subtask_total > 0 ? `<span class="subtask-count">${t.subtask_done}/${t.subtask_total}</span>` : ''}
+        ${hasSubs ? `<span class="subtask-count" onclick="event.stopPropagation();toggleCardExpand(${t.id})" title="Toggle subtasks">
+          ${t.subtask_done}/${t.subtask_total}&nbsp;<span id="cst-arrow-${t.id}">&#9656;</span>
+        </span>` : ''}
         <div class="card-actions" onclick="event.stopPropagation()">
           <button class="card-btn ${t.flagged ? 'on' : ''}" title="${t.flagged ? 'Remove flag' : 'Flag'}"
             onclick="toggleFlag(${t.id}, ${t.flagged})">&#x1F6A9;</button>
@@ -642,6 +691,7 @@
           }
         </div>
       </div>
+      ${hasSubs ? `<div class="card-subtasks" id="cst-${t.id}" style="display:none"></div>` : ''}
     </div>`;
   }
 
@@ -1244,17 +1294,35 @@
 
   function renderSubtasks() {
     const total = currentSubtasks.length;
-    const done  = currentSubtasks.filter(s => s.completed).length;
+    const done  = currentSubtasks.filter(s => s.status === 'done').length;
     document.getElementById('subtask-progress').textContent = total ? `${done}/${total}` : '';
     document.getElementById('subtask-list').innerHTML = currentSubtasks.map(s => `
       <div class="subtask-item">
-        <label>
-          <input type="checkbox" ${s.completed ? 'checked' : ''}
-                 onchange="toggleSubtask(${s.id}, this.checked)" />
-          <span class="${s.completed ? 'done-text' : ''}">${esc(s.title)}</span>
-        </label>
+        <select class="subtask-status-sel" onchange="updateSubtask(${s.id}, {status: this.value})">
+          <option value="todo"        ${s.status === 'todo'        ? 'selected' : ''}>To Do</option>
+          <option value="in_progress" ${s.status === 'in_progress' ? 'selected' : ''}>In Prog</option>
+          <option value="done"        ${s.status === 'done'        ? 'selected' : ''}>Done</option>
+        </select>
+        <span class="subtask-title ${s.status === 'done' ? 'done-text' : ''}">${esc(s.title)}</span>
+        <input type="date" class="subtask-date-inp" value="${s.due_date ? s.due_date.slice(0,10) : ''}"
+               title="${s.due_date ? formatDue(s.due_date) : 'Set due date'}"
+               onchange="updateSubtask(${s.id}, {due_date: this.value || null})" />
+        <button class="subtask-flag-btn ${s.flagged ? 'on' : ''}" title="${s.flagged ? 'Remove flag' : 'Flag'}"
+                onclick="updateSubtask(${s.id}, {flagged: ${s.flagged ? 0 : 1}})">&#x1F6A9;</button>
         <button class="subtask-del" onclick="deleteSubtask(${s.id})" title="Remove">&#x2715;</button>
       </div>`).join('');
+  }
+
+  async function updateSubtask(sid, patch) {
+    const s = currentSubtasks.find(s => s.id === sid);
+    if (s) Object.assign(s, patch);
+    await fetch(`/api/subtasks/${sid}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch)
+    });
+    renderSubtasks();
+    loadTasks();
   }
 
   async function addSubtask() {
@@ -1272,19 +1340,53 @@
     loadTasks();
   }
 
-  async function toggleSubtask(sid, completed) {
-    await fetch(`/api/subtasks/${sid}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ completed: completed ? 1 : 0 })
-    });
-    await loadSubtasks();
+  async function deleteSubtask(sid) {
+    await fetch(`/api/subtasks/${sid}`, { method: 'DELETE' });
+    currentSubtasks = currentSubtasks.filter(s => s.id !== sid);
+    renderSubtasks();
     loadTasks();
   }
 
-  async function deleteSubtask(sid) {
-    await fetch(`/api/subtasks/${sid}`, { method: 'DELETE' });
-    await loadSubtasks();
+  // ── Card inline subtask expansion ──
+  function cardSubtaskRowHTML(s, cardId) {
+    const due = s.due_date ? formatDue(s.due_date) : '';
+    return `<div class="card-subtask-row"
+      onclick="event.stopPropagation();cycleSubtaskStatus(${s.id},'${s.status}',${cardId})"
+      title="Click to cycle status">
+      <span class="subtask-dot ${esc(s.status)}"></span>
+      <span class="card-subtask-title ${s.status === 'done' ? 'done-text' : ''}">${esc(s.title)}</span>
+      ${due ? `<span class="card-subtask-due">${due}</span>` : ''}
+      ${s.flagged ? `<span style="font-size:10px;line-height:1;flex-shrink:0">&#x1F6A9;</span>` : ''}
+    </div>`;
+  }
+
+  async function toggleCardExpand(id) {
+    const el    = document.getElementById(`cst-${id}`);
+    const arrow = document.getElementById(`cst-arrow-${id}`);
+    if (!el) return;
+    if (expandedCards.has(id)) {
+      expandedCards.delete(id);
+      el.style.display = 'none';
+      el.innerHTML = '';
+      if (arrow) arrow.innerHTML = '&#9656;';
+    } else {
+      expandedCards.add(id);
+      el.style.display = 'block';
+      if (arrow) arrow.innerHTML = '&#9662;';
+      const r    = await fetch(`/api/tasks/${id}/subtasks`);
+      const subs = await r.json();
+      el.innerHTML = subs.map(s => cardSubtaskRowHTML(s, id)).join('');
+    }
+  }
+
+  async function cycleSubtaskStatus(sid, current, cardId) {
+    const cycle = { todo: 'in_progress', in_progress: 'done', done: 'todo' };
+    const next  = cycle[current] || 'todo';
+    await fetch(`/api/subtasks/${sid}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: next })
+    });
     loadTasks();
   }
 

@@ -177,6 +177,11 @@ def init_db():
         completed INTEGER DEFAULT 0,
         created_at TEXT
     )""")
+    for col, defn in [("status", "TEXT DEFAULT 'todo'"), ("flagged", "INTEGER DEFAULT 0"), ("due_date", "TEXT")]:
+        try:
+            db.execute(f"ALTER TABLE subtasks ADD COLUMN {col} {defn}")
+        except Exception:
+            pass
     db.execute("INSERT OR IGNORE INTO projects (id,user_id,name,family,color) VALUES (1,0,'personal','personal','#6B21A8')")
     db.commit()
 
@@ -475,7 +480,7 @@ def get_tasks():
     db.commit()
     sub_counts = """
         (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id) as subtask_total,
-        (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND s.completed=1) as subtask_done
+        (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND (s.status='done' OR (s.status IS NULL AND s.completed=1))) as subtask_done
     """
     if request.args.get('archived') == '1':
         tasks = db.execute(
@@ -554,7 +559,13 @@ def get_subtasks(tid):
     rows = db.execute(
         "SELECT * FROM subtasks WHERE task_id=? ORDER BY created_at", (tid,)
     ).fetchall()
-    return jsonify([dict(r) for r in rows])
+    result = []
+    for r in rows:
+        d = dict(r)
+        if not d.get('status'):
+            d['status'] = 'done' if d.get('completed') else 'todo'
+        result.append(d)
+    return jsonify(result)
 
 
 @app.route("/api/tasks/<int:tid>/subtasks", methods=["POST"])
@@ -579,8 +590,18 @@ def update_subtask(sid):
     d = request.json
     db = get_db()
     owns = "task_id IN (SELECT id FROM tasks WHERE user_id=?)"
-    if "completed" in d:
-        db.execute(f"UPDATE subtasks SET completed=? WHERE id=? AND {owns}", (d["completed"], sid, current_user.id))
+    if "status" in d:
+        completed = 1 if d["status"] == "done" else 0
+        db.execute(f"UPDATE subtasks SET status=?, completed=? WHERE id=? AND {owns}",
+                   (d["status"], completed, sid, current_user.id))
+    if "completed" in d and "status" not in d:
+        status = "done" if d["completed"] else "todo"
+        db.execute(f"UPDATE subtasks SET completed=?, status=? WHERE id=? AND {owns}",
+                   (d["completed"], status, sid, current_user.id))
+    if "flagged" in d:
+        db.execute(f"UPDATE subtasks SET flagged=? WHERE id=? AND {owns}", (d["flagged"], sid, current_user.id))
+    if "due_date" in d:
+        db.execute(f"UPDATE subtasks SET due_date=? WHERE id=? AND {owns}", (d["due_date"], sid, current_user.id))
     if "title" in d:
         db.execute(f"UPDATE subtasks SET title=? WHERE id=? AND {owns}", (d["title"].strip(), sid, current_user.id))
     db.commit()
