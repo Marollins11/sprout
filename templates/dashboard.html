@@ -186,6 +186,17 @@
     .subtask-item:last-child { border-bottom: none; }
     .subtask-item.dragging { opacity: 0.35; }
     .subtask-item .done-text { text-decoration: line-through; color: var(--text-faint); }
+    .status-update-item { padding: 7px 0; border-bottom: 1px solid var(--border-sub); }
+    .status-update-item:last-child { border-bottom: none; }
+    .status-update-row { display: flex; align-items: flex-start; gap: 6px; }
+    .status-update-note { flex: 1; font-size: 13px; color: var(--text); line-height: 1.5;
+                           white-space: pre-wrap; }
+    .status-update-time { font-size: 10px; color: var(--text-faint); margin-top: 2px; }
+    .status-update-del { background: none; border: none; cursor: pointer; color: var(--text-faint);
+                          font-size: 16px; padding: 0 3px; opacity: 0; transition: opacity 0.15s;
+                          line-height: 1; flex-shrink: 0; }
+    .status-update-item:hover .status-update-del { opacity: 1; }
+    .status-update-empty { font-size: 12px; color: var(--text-faint); padding: 4px 0; }
     .subtask-drag-handle { cursor: grab; color: var(--text-faint); font-size: 12px;
                             flex-shrink: 0; letter-spacing: -2px; }
     .subtask-title { flex: 1; font-size: 13px; color: var(--text); min-width: 0;
@@ -249,6 +260,7 @@
                    border: 1px solid var(--border); background: var(--surface-btn);
                    color: var(--text-muted); transition: all 0.15s; }
     .status-btn.active { background: var(--accent); color: #fff; border-color: transparent; }
+    .status-btn[data-status="blocked"].active { background: #dc2626; }
     .status-btn:hover:not(.active) { border-color: var(--accent); color: var(--text); }
 
     /* Modal */
@@ -427,6 +439,11 @@
       <div class="col-body" id="col-inprog"
            ondragover="colDragOver(event)" ondragleave="colDragLeave(event)" ondrop="colDrop(event,'in_progress')"></div>
     </div>
+    <div class="column">
+      <div class="col-header">Blocked <span class="col-count" id="count-blocked">0</span></div>
+      <div class="col-body" id="col-blocked"
+           ondragover="colDragOver(event)" ondragleave="colDragLeave(event)" ondrop="colDrop(event,'blocked')"></div>
+    </div>
     <div class="column" id="col-done-wrapper">
       <div class="col-header" onclick="if(document.getElementById('col-done-wrapper').classList.contains('collapsed'))toggleDoneCollapse()">
         <span>Done <span class="col-count" id="count-done">0</span></span>
@@ -601,8 +618,8 @@
   const SOURCE_COLORS = {
     Google: '#2563EB', Outlook: '#0078D4', iCloud: '#6B21A8'
   };
-  const STATUS_CYCLE = { todo: 'in_progress', in_progress: 'done', done: 'todo' };
-  const STATUS_LABEL = { todo: 'To Do', in_progress: 'In Progress', done: 'Done' };
+  const STATUS_CYCLE = { todo: 'in_progress', in_progress: 'done', done: 'todo', blocked: 'in_progress' };
+  const STATUS_LABEL = { todo: 'To Do', in_progress: 'In Progress', done: 'Done', blocked: 'Blocked' };
 
   function toggleDueSort() {
     dueSortAsc = !dueSortAsc;
@@ -648,7 +665,7 @@
   }
 
   function renderBoard() {
-    const cols = { todo: [], in_progress: [], done: [] };
+    const cols = { todo: [], in_progress: [], blocked: [], done: [] };
     allTasks.forEach(t => {
       if (familyFilter !== 'all' && t.family !== familyFilter) return;
       if (subFilters.size && !subFilters.has(t.project)) return;
@@ -667,9 +684,10 @@
     }));
 
     const map = {
-      todo:        ['col-todo',   'count-todo'],
-      in_progress: ['col-inprog', 'count-inprog'],
-      done:        ['col-done',   'count-done']
+      todo:        ['col-todo',    'count-todo'],
+      in_progress: ['col-inprog',  'count-inprog'],
+      blocked:     ['col-blocked', 'count-blocked'],
+      done:        ['col-done',    'count-done']
     };
     Object.entries(map).forEach(([status, [colId, cntId]]) => {
       document.getElementById(cntId).textContent = cols[status].length;
@@ -794,14 +812,18 @@
     document.getElementById('subtask-list').innerHTML = '';
     document.getElementById('subtask-progress').textContent = '';
     document.getElementById('subtask-input').value = '';
+    document.getElementById('status-update-list').innerHTML = '';
+    document.getElementById('status-update-input').value = '';
     document.getElementById('card-modal').classList.add('show');
     loadSubtasks();
+    loadStatusUpdates();
   }
 
   function closeCard() {
     document.getElementById('card-modal').classList.remove('show');
     currentCardId = null;
     currentSubtasks = [];
+    currentStatusUpdates = [];
   }
 
   function handleCardModalClick(e) {
@@ -1438,6 +1460,63 @@
     loadTasks();
   }
 
+  // ── Status updates (progress log) ──
+  let currentStatusUpdates = [];
+
+  function formatUpdateTime(iso) {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleString('en-US', {
+        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+      });
+    } catch { return ''; }
+  }
+
+  async function loadStatusUpdates() {
+    if (!currentCardId) return;
+    const r = await fetch(`/api/tasks/${currentCardId}/updates`);
+    currentStatusUpdates = await r.json();
+    renderStatusUpdates();
+  }
+
+  function renderStatusUpdates() {
+    const list = document.getElementById('status-update-list');
+    if (!currentStatusUpdates.length) {
+      list.innerHTML = '<div class="status-update-empty">No updates yet — jot down where you left off.</div>';
+      return;
+    }
+    list.innerHTML = currentStatusUpdates.map(u => `
+      <div class="status-update-item">
+        <div class="status-update-row">
+          <div>
+            <div class="status-update-note">${esc(u.note)}</div>
+            <div class="status-update-time">${formatUpdateTime(u.created_at)}</div>
+          </div>
+          <button class="status-update-del" onclick="deleteStatusUpdate(${u.id})" title="Remove">&#x2715;</button>
+        </div>
+      </div>`).join('');
+  }
+
+  async function addStatusUpdate() {
+    if (!currentCardId) return;
+    const inp = document.getElementById('status-update-input');
+    const note = inp.value.trim();
+    if (!note) return;
+    await fetch(`/api/tasks/${currentCardId}/updates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note })
+    });
+    inp.value = '';
+    await loadStatusUpdates();
+  }
+
+  async function deleteStatusUpdate(id) {
+    await fetch(`/api/updates/${id}`, { method: 'DELETE' });
+    currentStatusUpdates = currentStatusUpdates.filter(u => u.id !== id);
+    renderStatusUpdates();
+  }
+
   // ── Card inline subtask expansion ──
   function cardSubtaskRowHTML(s, cardId) {
     const due = s.due_date ? formatDue(s.due_date) : '';
@@ -1623,6 +1702,7 @@
       <div class="status-btns" id="detail-status-btns">
         <button class="status-btn" data-status="todo"        onclick="setDetailStatus('todo')">To Do</button>
         <button class="status-btn" data-status="in_progress" onclick="setDetailStatus('in_progress')">In Progress</button>
+        <button class="status-btn" data-status="blocked"     onclick="setDetailStatus('blocked')">Blocked</button>
         <button class="status-btn" data-status="done"        onclick="setDetailStatus('done')">Done</button>
       </div>
     </div>
@@ -1652,6 +1732,16 @@
         <input type="text" id="subtask-input" placeholder="Add a subtask…"
                onkeydown="if(event.key==='Enter')addSubtask()" />
         <button onclick="addSubtask()">Add</button>
+      </div>
+    </div>
+    <div class="detail-section">
+      <div class="detail-label">Status Updates <span style="font-size:10px;color:var(--text-faint);
+        text-transform:none;letter-spacing:0">(where you left off)</span></div>
+      <div id="status-update-list"></div>
+      <div class="subtask-add">
+        <input type="text" id="status-update-input" placeholder="What's the latest? e.g. Waiting on design review…"
+               onkeydown="if(event.key==='Enter')addStatusUpdate()" />
+        <button onclick="addStatusUpdate()">Add</button>
       </div>
     </div>
     <div class="modal-btns">

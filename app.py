@@ -184,6 +184,12 @@ def init_db():
             db.execute(f"ALTER TABLE subtasks ADD COLUMN {col} {defn}")
         except Exception:
             pass
+    db.execute("""CREATE TABLE IF NOT EXISTS status_updates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        note TEXT NOT NULL,
+        created_at TEXT
+    )""")
     db.execute("INSERT OR IGNORE INTO projects (id,user_id,name,family,color) VALUES (1,0,'personal','personal','#6B21A8')")
     db.commit()
 
@@ -674,6 +680,46 @@ def reorder_subtasks(tid):
     order = request.json.get("order", [])
     for idx, sid in enumerate(order):
         db.execute("UPDATE subtasks SET position=? WHERE id=? AND task_id=?", (idx, sid, tid))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/tasks/<int:tid>/updates")
+def get_status_updates(tid):
+    db = get_db()
+    task = db.execute("SELECT id FROM tasks WHERE id=? AND user_id=?", (tid, current_user.id)).fetchone()
+    if not task:
+        return jsonify([])
+    rows = db.execute(
+        "SELECT * FROM status_updates WHERE task_id=? ORDER BY created_at DESC", (tid,)
+    ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/tasks/<int:tid>/updates", methods=["POST"])
+def add_status_update(tid):
+    db = get_db()
+    task = db.execute("SELECT id FROM tasks WHERE id=? AND user_id=?", (tid, current_user.id)).fetchone()
+    if not task:
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    note = (request.json.get("note") or "").strip()
+    if not note:
+        return jsonify({"ok": False, "error": "Note required"}), 400
+    cur = db.execute(
+        "INSERT INTO status_updates (task_id,note,created_at) VALUES (?,?,?)",
+        (tid, note, datetime.now().isoformat())
+    )
+    db.commit()
+    return jsonify({"ok": True, "id": cur.lastrowid})
+
+
+@app.route("/api/updates/<int:update_id>", methods=["DELETE"])
+def delete_status_update(update_id):
+    db = get_db()
+    db.execute(
+        "DELETE FROM status_updates WHERE id=? AND task_id IN (SELECT id FROM tasks WHERE user_id=?)",
+        (update_id, current_user.id)
+    )
     db.commit()
     return jsonify({"ok": True})
 
