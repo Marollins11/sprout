@@ -119,7 +119,8 @@
     .card-btn.on { opacity: 1; }
     .card-hint { font-size: 10px; color: var(--text-dim); margin-top: 6px; }
     .card-desc { font-size: 11px; color: var(--text-muted); margin: 4px 0 8px;
-                 line-height: 1.45; white-space: pre-wrap; }
+                 line-height: 1.45; white-space: pre-wrap; display: -webkit-box;
+                 -webkit-line-clamp: 7; -webkit-box-orient: vertical; overflow: hidden; }
     .card-due  { font-size: 11px; color: var(--text-faint); white-space: nowrap; flex-shrink: 0; }
     .col-body.drag-over { outline: 2px dashed var(--accent); border-radius: 8px; background: var(--surface-btn); }
     .card.dragging { opacity: 0.35; }
