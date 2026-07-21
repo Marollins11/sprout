@@ -228,6 +228,7 @@
                         font-size: 11px; color: var(--text-muted); border-radius: 4px;
                         cursor: pointer; }
     .card-subtask-row:hover { background: var(--surface-btn); }
+    .card-subtask-empty { font-size: 11px; color: var(--text-faint); padding: 3px 4px; }
     .subtask-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
     .subtask-dot.todo { background: var(--text-dim); border: 1px solid var(--text-faint); }
     .subtask-dot.in_progress { background: #f59e0b; }
@@ -682,6 +683,7 @@
     const nextLabel  = STATUS_LABEL[nextStatus];
     const dueStr     = formatDue(t.due_date);
     const subs       = t.subtasks || [];
+    const openSubs   = subs.filter(s => s.status !== 'done');
     const hasSubs    = subs.length > 0;
     const collapsed  = collapsedCards.has(t.id);
     return `<div class="card ${t.flagged ? 'flagged' : ''}"
@@ -710,7 +712,8 @@
         </div>
       </div>
       ${hasSubs ? `<div class="card-subtasks" id="cst-${t.id}" style="display:${collapsed ? 'none' : 'block'}">
-        ${subs.map(s => cardSubtaskRowHTML(s, t.id)).join('')}
+        ${openSubs.length ? openSubs.map(s => cardSubtaskRowHTML(s, t.id)).join('')
+                          : '<div class="card-subtask-empty">All subtasks complete</div>'}
       </div>` : ''}
     </div>`;
   }
@@ -1348,7 +1351,8 @@
     const total = currentSubtasks.length;
     const done  = currentSubtasks.filter(s => s.status === 'done').length;
     document.getElementById('subtask-progress').textContent = total ? `${done}/${total}` : '';
-    document.getElementById('subtask-list').innerHTML = currentSubtasks.map(s => `
+    const sorted = [...currentSubtasks].sort((a, b) => (a.status === 'done') - (b.status === 'done'));
+    document.getElementById('subtask-list').innerHTML = sorted.map(s => `
       <div class="subtask-item" data-id="${s.id}" draggable="true"
            ondragstart="subtaskDragStart(event,${s.id})" ondragend="subtaskDragEnd(event)">
         <span class="subtask-drag-handle" title="Drag to reorder">&#8942;&#8942;</span>
