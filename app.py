@@ -517,7 +517,9 @@ def get_tasks():
 def add_task():
     d = request.json
     uid = current_user.id
-    color = get_or_create_project(d.get("project", "personal"), d.get("family", "personal"), uid=uid)
+    project = d.get("project", "personal").strip().lower()
+    family = d.get("family", "personal").strip().lower()
+    color = get_or_create_project(project, family, uid=uid)
     db = get_db()
     next_pos = db.execute(
         "SELECT COALESCE(MAX(position), -1) + 1 FROM tasks WHERE user_id=? AND status='todo'", (uid,)
@@ -525,8 +527,8 @@ def add_task():
     db.execute(
         "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description,user_id,priority,position) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (d["title"], "todo", d.get("project", "personal").lower(),
-         d.get("family", "personal").lower(), color, datetime.now().isoformat(),
+        (d["title"], "todo", project,
+         family, color, datetime.now().isoformat(),
          d.get("due_date"), d.get("description"), uid, d.get("priority") or None, next_pos)
     )
     db.commit()
@@ -557,9 +559,11 @@ def update_task(tid):
     if "priority"    in d: db.execute("UPDATE tasks SET priority=?    WHERE id=? AND user_id=?", (d["priority"] or None, tid, uid))
     color = None
     if "project" in d:
-        color = get_or_create_project(d["project"], d.get("family", ""), uid=uid)
+        project = d["project"].strip().lower()
+        family = (d.get("family") or "").strip().lower()
+        color = get_or_create_project(project, family, uid=uid)
         db.execute("UPDATE tasks SET project=?,family=?,color=? WHERE id=? AND user_id=?",
-                   (d["project"], d.get("family", ""), color, tid, uid))
+                   (project, family, color, tid, uid))
     db.commit()
     return jsonify({"ok": True, "color": color})
 

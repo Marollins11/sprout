@@ -831,7 +831,7 @@
   async function saveDetailGroup() {
     if (!currentCardId) return;
     const family  = document.getElementById('detail-family').value;
-    const project = document.getElementById('detail-project').value.trim() || family;
+    const project = (document.getElementById('detail-project').value.trim() || family).toLowerCase();
     document.getElementById('detail-project').value = project;
     const r = await fetch(`/api/tasks/${currentCardId}`, {
       method: 'PATCH',
