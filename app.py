@@ -479,42 +479,22 @@ def get_tasks():
           AND done_at IS NOT NULL AND user_id=?
           AND julianday('now') - julianday(done_at) > 14
     """, (uid,))
-    # Repair any task whose stored color has drifted from its project's current color
-    # (e.g. an older sync/edit snapshotted a since-changed or since-merged project color).
-    db.execute("""
-        UPDATE tasks SET color = (
-            SELECT p.color FROM projects p WHERE p.user_id = tasks.user_id AND p.name = tasks.project
-        )
-        WHERE user_id=? AND EXISTS (
-            SELECT 1 FROM projects p
-            WHERE p.user_id = tasks.user_id AND p.name = tasks.project AND p.color != tasks.color
-        )
-    """, (uid,))
     db.commit()
     sub_counts = """
         (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id) as subtask_total,
         (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND (s.status='done' OR (s.status IS NULL AND s.completed=1))) as subtask_done
     """
-    # Join the project's canonical color so a task always matches its sub-project's
-    # current tag color, even if the task's own color snapshot has drifted out of sync.
-    color_join = "LEFT JOIN projects p ON p.user_id = t.user_id AND p.name = t.project"
     if request.args.get('archived') == '1':
         tasks = db.execute(
-            f"SELECT t.*, {sub_counts}, p.color as proj_color FROM tasks t {color_join} "
-            f"WHERE t.archived=1 AND t.user_id=? ORDER BY t.done_at DESC, t.created_at DESC",
+            f"SELECT t.*, {sub_counts} FROM tasks t WHERE t.archived=1 AND t.user_id=? ORDER BY t.done_at DESC, t.created_at DESC",
             (uid,)
         ).fetchall()
     else:
         tasks = db.execute(
-            f"SELECT t.*, {sub_counts}, p.color as proj_color FROM tasks t {color_join} "
-            f"WHERE (t.archived IS NULL OR t.archived=0) AND t.user_id=? ORDER BY t.flagged DESC, t.created_at DESC",
+            f"SELECT t.*, {sub_counts} FROM tasks t WHERE (t.archived IS NULL OR t.archived=0) AND t.user_id=? ORDER BY t.flagged DESC, t.created_at DESC",
             (uid,)
         ).fetchall()
     task_list = [dict(t) for t in tasks]
-    for t in task_list:
-        proj_color = t.pop('proj_color', None)
-        if proj_color:
-            t['color'] = proj_color
     task_ids = [t['id'] for t in task_list]
     subtasks_by_task = {}
     if task_ids:
