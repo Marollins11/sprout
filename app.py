@@ -95,7 +95,8 @@ def init_db():
     )""")
     for col, defn in [("due_date", "TEXT"), ("description", "TEXT"),
                        ("archived", "INTEGER DEFAULT 0"), ("done_at", "TEXT"),
-                       ("user_id", "INTEGER")]:
+                       ("user_id", "INTEGER"), ("priority", "TEXT"),
+                       ("position", "INTEGER DEFAULT 0")]:
         try:
             db.execute(f"ALTER TABLE tasks ADD COLUMN {col} {defn}")
         except Exception:
@@ -177,7 +178,8 @@ def init_db():
         completed INTEGER DEFAULT 0,
         created_at TEXT
     )""")
-    for col, defn in [("status", "TEXT DEFAULT 'todo'"), ("flagged", "INTEGER DEFAULT 0"), ("due_date", "TEXT")]:
+    for col, defn in [("status", "TEXT DEFAULT 'todo'"), ("flagged", "INTEGER DEFAULT 0"), ("due_date", "TEXT"),
+                       ("position", "INTEGER DEFAULT 0")]:
         try:
             db.execute(f"ALTER TABLE subtasks ADD COLUMN {col} {defn}")
         except Exception:
@@ -498,7 +500,7 @@ def get_tasks():
     if task_ids:
         placeholders = ','.join('?' * len(task_ids))
         sub_rows = db.execute(
-            f"SELECT * FROM subtasks WHERE task_id IN ({placeholders}) ORDER BY created_at",
+            f"SELECT * FROM subtasks WHERE task_id IN ({placeholders}) ORDER BY position, created_at",
             task_ids
         ).fetchall()
         for r in sub_rows:
@@ -517,11 +519,15 @@ def add_task():
     uid = current_user.id
     color = get_or_create_project(d.get("project", "personal"), d.get("family", "personal"), uid=uid)
     db = get_db()
+    next_pos = db.execute(
+        "SELECT COALESCE(MAX(position), -1) + 1 FROM tasks WHERE user_id=? AND status='todo'", (uid,)
+    ).fetchone()[0]
     db.execute(
-        "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description,user_id) VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description,user_id,priority,position) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (d["title"], "todo", d.get("project", "personal").lower(),
          d.get("family", "personal").lower(), color, datetime.now().isoformat(),
-         d.get("due_date"), d.get("description"), uid)
+         d.get("due_date"), d.get("description"), uid, d.get("priority") or None, next_pos)
     )
     db.commit()
     return jsonify({"ok": True, "color": color})
@@ -548,6 +554,7 @@ def update_task(tid):
     if "due_date"    in d: db.execute("UPDATE tasks SET due_date=?    WHERE id=? AND user_id=?", (d["due_date"], tid, uid))
     if "description" in d: db.execute("UPDATE tasks SET description=? WHERE id=? AND user_id=?", (d["description"], tid, uid))
     if "title"       in d: db.execute("UPDATE tasks SET title=?       WHERE id=? AND user_id=?", (d["title"], tid, uid))
+    if "priority"    in d: db.execute("UPDATE tasks SET priority=?    WHERE id=? AND user_id=?", (d["priority"] or None, tid, uid))
     color = None
     if "project" in d:
         color = get_or_create_project(d["project"], d.get("family", ""), uid=uid)
@@ -566,6 +573,22 @@ def delete_task(tid):
     return jsonify({"ok": True})
 
 
+@app.route("/api/tasks/reorder", methods=["PATCH"])
+def reorder_tasks():
+    d = request.json
+    uid = current_user.id
+    status = d.get("status")
+    order = d.get("order", [])
+    db = get_db()
+    for idx, tid in enumerate(order):
+        if status is not None:
+            db.execute("UPDATE tasks SET status=?, position=? WHERE id=? AND user_id=?", (status, idx, tid, uid))
+        else:
+            db.execute("UPDATE tasks SET position=? WHERE id=? AND user_id=?", (idx, tid, uid))
+    db.commit()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/tasks/<int:tid>/subtasks")
 def get_subtasks(tid):
     db = get_db()
@@ -573,7 +596,7 @@ def get_subtasks(tid):
     if not task:
         return jsonify([])
     rows = db.execute(
-        "SELECT * FROM subtasks WHERE task_id=? ORDER BY created_at", (tid,)
+        "SELECT * FROM subtasks WHERE task_id=? ORDER BY position, created_at", (tid,)
     ).fetchall()
     result = []
     for r in rows:
@@ -593,9 +616,12 @@ def add_subtask(tid):
     title = (request.json.get("title") or "").strip()
     if not title:
         return jsonify({"ok": False, "error": "Title required"}), 400
+    next_pos = db.execute(
+        "SELECT COALESCE(MAX(position), -1) + 1 FROM subtasks WHERE task_id=?", (tid,)
+    ).fetchone()[0]
     cur = db.execute(
-        "INSERT INTO subtasks (task_id,title,created_at) VALUES (?,?,?)",
-        (tid, title, datetime.now().isoformat())
+        "INSERT INTO subtasks (task_id,title,created_at,position) VALUES (?,?,?,?)",
+        (tid, title, datetime.now().isoformat(), next_pos)
     )
     db.commit()
     return jsonify({"ok": True, "id": cur.lastrowid})
@@ -634,6 +660,18 @@ def delete_subtask(sid):
     db.commit()
     return jsonify({"ok": True})
 
+
+@app.route("/api/tasks/<int:tid>/subtasks/reorder", methods=["PATCH"])
+def reorder_subtasks(tid):
+    db = get_db()
+    task = db.execute("SELECT id FROM tasks WHERE id=? AND user_id=?", (tid, current_user.id)).fetchone()
+    if not task:
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    order = request.json.get("order", [])
+    for idx, sid in enumerate(order):
+        db.execute("UPDATE subtasks SET position=? WHERE id=? AND task_id=?", (idx, sid, tid))
+    db.commit()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/projects")

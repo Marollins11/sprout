@@ -122,6 +122,11 @@
                  line-height: 1.45; white-space: pre-wrap; display: -webkit-box;
                  -webkit-line-clamp: 7; -webkit-box-orient: vertical; overflow: hidden; }
     .card-due  { font-size: 11px; color: var(--text-faint); white-space: nowrap; flex-shrink: 0; }
+    .priority-badge { font-size: 10px; padding: 2px 7px; border-radius: 8px; color: #fff;
+                      text-transform: uppercase; letter-spacing: 0.04em; flex-shrink: 0; }
+    .priority-badge.priority-high   { background: #dc2626; }
+    .priority-badge.priority-medium { background: #d97706; }
+    .priority-badge.priority-low    { background: #2563eb; }
     .col-body.drag-over { outline: 2px dashed var(--accent); border-radius: 8px; background: var(--surface-btn); }
     .card.dragging { opacity: 0.35; }
     /* Collapse + archive */
@@ -179,7 +184,10 @@
     .subtask-item { display: flex; align-items: center; gap: 6px; padding: 5px 0;
                     border-bottom: 1px solid var(--border-sub); }
     .subtask-item:last-child { border-bottom: none; }
+    .subtask-item.dragging { opacity: 0.35; }
     .subtask-item .done-text { text-decoration: line-through; color: var(--text-faint); }
+    .subtask-drag-handle { cursor: grab; color: var(--text-faint); font-size: 12px;
+                            flex-shrink: 0; letter-spacing: -2px; }
     .subtask-title { flex: 1; font-size: 13px; color: var(--text); min-width: 0;
                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .subtask-status-sel { background: var(--surface-btn); border: 1px solid var(--border);
@@ -532,6 +540,15 @@
       <input type="date" id="task-due" />
     </div>
     <div class="form-row">
+      <label>Priority</label>
+      <select id="task-priority">
+        <option value="">None</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+      </select>
+    </div>
+    <div class="form-row">
       <label>Description</label>
       <textarea id="task-desc" placeholder="Optional details…"
         style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);
@@ -575,6 +592,7 @@
   let calEvents = [];
   let calLoaded = false;
   let dragId = null;
+  let subtaskDragId = null;
   let currentCardId = null;
   let dueSortAsc = true;
   const sourcesEnabled = {};
@@ -622,6 +640,12 @@
     }
   }
 
+  function priorityRank(p) {
+    if (p === 'high') return 0;
+    if (p === 'low') return 2;
+    return 1; // medium or unset
+  }
+
   function renderBoard() {
     const cols = { todo: [], in_progress: [], done: [] };
     allTasks.forEach(t => {
@@ -630,6 +654,10 @@
       if (cols[t.status] !== undefined) cols[t.status].push(t);
     });
     Object.values(cols).forEach(arr => arr.sort((a, b) => {
+      const pd = priorityRank(a.priority) - priorityRank(b.priority);
+      if (pd !== 0) return pd;
+      const posDiff = (a.position || 0) - (b.position || 0);
+      if (posDiff !== 0) return posDiff;
       if (!a.due_date && !b.due_date) return 0;
       if (!a.due_date) return 1;
       if (!b.due_date) return -1;
@@ -657,6 +685,7 @@
     const hasSubs    = subs.length > 0;
     const collapsed  = collapsedCards.has(t.id);
     return `<div class="card ${t.flagged ? 'flagged' : ''}"
+      data-id="${t.id}"
       draggable="true"
       ondragstart="cardDragStart(event,${t.id})"
       ondragend="cardDragEnd(event)"
@@ -665,6 +694,7 @@
       ${t.description ? `<div class="card-desc">${esc(t.description)}</div>` : ''}
       <div class="card-meta">
         <span class="card-badge" style="background:${esc(t.color)}">${esc(t.project)}</span>
+        ${t.priority ? `<span class="priority-badge priority-${t.priority}">${t.priority}</span>` : ''}
         ${dueStr ? `<span class="card-due">${dueStr}</span>` : ''}
         ${hasSubs ? `<span class="subtask-count" onclick="event.stopPropagation();toggleCardExpand(${t.id})" title="Toggle subtasks">
           ${t.subtask_done}/${t.subtask_total}&nbsp;<span id="cst-arrow-${t.id}">${collapsed ? '&#9656;' : '&#9662;'}</span>
@@ -696,9 +726,24 @@
     e.target.classList.remove('dragging');
   }
 
+  function dragAfterElement(container, selector, y) {
+    const els = [...container.querySelectorAll(`${selector}:not(.dragging)`)];
+    return els.reduce((closest, child) => {
+      const box = child.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset) return { offset, element: child };
+      return closest;
+    }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+  }
+
   function colDragOver(e) {
     e.preventDefault();
     e.currentTarget.classList.add('drag-over');
+    const dragging = document.querySelector('.card.dragging');
+    if (!dragging) return;
+    const after = dragAfterElement(e.currentTarget, '.card', e.clientY);
+    if (after == null) e.currentTarget.appendChild(dragging);
+    else e.currentTarget.insertBefore(dragging, after);
   }
 
   function colDragLeave(e) {
@@ -709,12 +754,13 @@
     e.preventDefault();
     e.currentTarget.classList.remove('drag-over');
     if (dragId === null) return;
-    await fetch(`/api/tasks/${dragId}`, {
+    const order = [...e.currentTarget.querySelectorAll('.card')].map(el => Number(el.dataset.id));
+    dragId = null;
+    await fetch('/api/tasks/reorder', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status })
+      body: JSON.stringify({ status, order })
     });
-    dragId = null;
     loadTasks();
   }
 
@@ -735,8 +781,10 @@
     document.getElementById('detail-desc-edit').value = t.description || '';
     descEl.style.display = '';
     document.getElementById('detail-desc-edit').style.display = 'none';
-    document.querySelectorAll('.status-btn').forEach(b =>
+    document.querySelectorAll('#detail-status-btns .status-btn').forEach(b =>
       b.classList.toggle('active', b.dataset.status === t.status));
+    document.querySelectorAll('#detail-priority-btns .status-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.priority === (t.priority || '')));
     const flagBtn = document.getElementById('detail-flag-btn');
     flagBtn.classList.toggle('on', !!t.flagged);
     flagBtn.innerHTML = t.flagged ? '&#x1F6A9; Flagged' : '&#x1F6A9; Flag';
@@ -828,8 +876,20 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status })
     });
-    document.querySelectorAll('.status-btn').forEach(b =>
+    document.querySelectorAll('#detail-status-btns .status-btn').forEach(b =>
       b.classList.toggle('active', b.dataset.status === status));
+    loadTasks();
+  }
+
+  async function setDetailPriority(priority) {
+    if (!currentCardId) return;
+    await fetch(`/api/tasks/${currentCardId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ priority: priority || null })
+    });
+    document.querySelectorAll('#detail-priority-btns .status-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.priority === priority));
     loadTasks();
   }
 
@@ -915,6 +975,7 @@
     document.getElementById('task-project').value = '';
     document.getElementById('task-family').value = (familyFilter !== 'all') ? familyFilter : 'personal';
     document.getElementById('task-due').value = '';
+    document.getElementById('task-priority').value = '';
     document.getElementById('task-desc').value = '';
     document.getElementById('modal').classList.add('show');
     setTimeout(() => document.getElementById('task-title').focus(), 50);
@@ -934,11 +995,12 @@
     const family      = document.getElementById('task-family').value;
     const project     = document.getElementById('task-project').value.trim() || family;
     const due_date    = document.getElementById('task-due').value || null;
+    const priority    = document.getElementById('task-priority').value || null;
     const description = document.getElementById('task-desc').value.trim() || null;
     await fetch('/api/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, family, project, due_date, description })
+      body: JSON.stringify({ title, family, project, due_date, priority, description })
     });
     closeModal();
     loadTasks();
@@ -1287,7 +1349,9 @@
     const done  = currentSubtasks.filter(s => s.status === 'done').length;
     document.getElementById('subtask-progress').textContent = total ? `${done}/${total}` : '';
     document.getElementById('subtask-list').innerHTML = currentSubtasks.map(s => `
-      <div class="subtask-item">
+      <div class="subtask-item" data-id="${s.id}" draggable="true"
+           ondragstart="subtaskDragStart(event,${s.id})" ondragend="subtaskDragEnd(event)">
+        <span class="subtask-drag-handle" title="Drag to reorder">&#8942;&#8942;</span>
         <select class="subtask-status-sel" onchange="updateSubtask(${s.id}, {status: this.value})">
           <option value="todo"        ${s.status === 'todo'        ? 'selected' : ''}>To Do</option>
           <option value="in_progress" ${s.status === 'in_progress' ? 'selected' : ''}>In Prog</option>
@@ -1301,6 +1365,39 @@
                 onclick="updateSubtask(${s.id}, {flagged: ${s.flagged ? 0 : 1}})">&#x1F6A9;</button>
         <button class="subtask-del" onclick="deleteSubtask(${s.id})" title="Remove">&#x2715;</button>
       </div>`).join('');
+  }
+
+  function subtaskDragStart(e, id) {
+    subtaskDragId = id;
+    e.dataTransfer.effectAllowed = 'move';
+    setTimeout(() => e.target.classList.add('dragging'), 0);
+  }
+
+  function subtaskDragEnd(e) {
+    e.target.classList.remove('dragging');
+  }
+
+  function subtaskListDragOver(e) {
+    e.preventDefault();
+    const dragging = document.querySelector('#subtask-list .subtask-item.dragging');
+    if (!dragging) return;
+    const after = dragAfterElement(e.currentTarget, '.subtask-item', e.clientY);
+    if (after == null) e.currentTarget.appendChild(dragging);
+    else e.currentTarget.insertBefore(dragging, after);
+  }
+
+  async function subtaskListDrop(e) {
+    e.preventDefault();
+    if (subtaskDragId === null || !currentCardId) return;
+    const order = [...e.currentTarget.querySelectorAll('.subtask-item')].map(el => Number(el.dataset.id));
+    subtaskDragId = null;
+    await fetch(`/api/tasks/${currentCardId}/subtasks/reorder`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order })
+    });
+    await loadSubtasks();
+    loadTasks();
   }
 
   async function updateSubtask(sid, patch) {
@@ -1519,10 +1616,19 @@
     </div>
     <div class="detail-section">
       <div class="detail-label">Status</div>
-      <div class="status-btns">
+      <div class="status-btns" id="detail-status-btns">
         <button class="status-btn" data-status="todo"        onclick="setDetailStatus('todo')">To Do</button>
         <button class="status-btn" data-status="in_progress" onclick="setDetailStatus('in_progress')">In Progress</button>
         <button class="status-btn" data-status="done"        onclick="setDetailStatus('done')">Done</button>
+      </div>
+    </div>
+    <div class="detail-section">
+      <div class="detail-label">Priority</div>
+      <div class="status-btns" id="detail-priority-btns">
+        <button class="status-btn" data-priority=""       onclick="setDetailPriority('')">None</button>
+        <button class="status-btn" data-priority="low"    onclick="setDetailPriority('low')">Low</button>
+        <button class="status-btn" data-priority="medium" onclick="setDetailPriority('medium')">Medium</button>
+        <button class="status-btn" data-priority="high"   onclick="setDetailPriority('high')">High</button>
       </div>
     </div>
     <div class="detail-section">
@@ -1537,7 +1643,7 @@
         <span id="subtask-progress" style="font-size:10px;color:var(--text-faint);
           text-transform:none;letter-spacing:0;margin-left:6px"></span>
       </div>
-      <div id="subtask-list"></div>
+      <div id="subtask-list" ondragover="subtaskListDragOver(event)" ondrop="subtaskListDrop(event)"></div>
       <div class="subtask-add">
         <input type="text" id="subtask-input" placeholder="Add a subtask…"
                onkeydown="if(event.key==='Enter')addSubtask()" />
