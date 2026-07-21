@@ -119,8 +119,7 @@
     .card-btn.on { opacity: 1; }
     .card-hint { font-size: 10px; color: var(--text-dim); margin-top: 6px; }
     .card-desc { font-size: 11px; color: var(--text-muted); margin: 4px 0 8px;
-                 line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2;
-                 -webkit-box-orient: vertical; overflow: hidden; }
+                 line-height: 1.45; white-space: pre-wrap; }
     .card-due  { font-size: 11px; color: var(--text-faint); white-space: nowrap; flex-shrink: 0; }
     .col-body.drag-over { outline: 2px dashed var(--accent); border-radius: 8px; background: var(--surface-btn); }
     .card.dragging { opacity: 0.35; }
@@ -570,7 +569,7 @@
   // ── State ──
   let allTasks = [];
   let familyFilter = 'all';
-  let subFilter = null;
+  const subFilters = new Set();
   let calOffset = 0;
   let calEvents = [];
   let calLoaded = false;
@@ -578,7 +577,7 @@
   let currentCardId = null;
   let dueSortAsc = true;
   const sourcesEnabled = {};
-  const expandedCards = new Set();
+  const collapsedCards = new Set(); // subtasks are shown by default; ids in here are manually collapsed
   const SOURCE_COLORS = {
     Google: '#2563EB', Outlook: '#0078D4', iCloud: '#6B21A8'
   };
@@ -626,7 +625,7 @@
     const cols = { todo: [], in_progress: [], done: [] };
     allTasks.forEach(t => {
       if (familyFilter !== 'all' && t.family !== familyFilter) return;
-      if (subFilter && t.project !== subFilter) return;
+      if (subFilters.size && !subFilters.has(t.project)) return;
       if (cols[t.status] !== undefined) cols[t.status].push(t);
     });
     Object.values(cols).forEach(arr => arr.sort((a, b) => {
@@ -647,27 +646,15 @@
       document.getElementById(colId).innerHTML = cols[status].map(cardHTML).join('');
     });
 
-    // Re-expand any previously expanded cards
-    expandedCards.forEach(id => {
-      const el    = document.getElementById(`cst-${id}`);
-      const arrow = document.getElementById(`cst-arrow-${id}`);
-      if (!el) { expandedCards.delete(id); return; }
-      el.style.display = 'block';
-      if (arrow) arrow.innerHTML = '&#9662;';
-      fetch(`/api/tasks/${id}/subtasks`)
-        .then(r => r.json())
-        .then(subs => {
-          const c = document.getElementById(`cst-${id}`);
-          if (c) c.innerHTML = subs.map(s => cardSubtaskRowHTML(s, id)).join('');
-        });
-    });
   }
 
   function cardHTML(t) {
     const nextStatus = STATUS_CYCLE[t.status] || 'todo';
     const nextLabel  = STATUS_LABEL[nextStatus];
     const dueStr     = formatDue(t.due_date);
-    const hasSubs    = t.subtask_total > 0;
+    const subs       = t.subtasks || [];
+    const hasSubs    = subs.length > 0;
+    const collapsed  = collapsedCards.has(t.id);
     return `<div class="card ${t.flagged ? 'flagged' : ''}"
       draggable="true"
       ondragstart="cardDragStart(event,${t.id})"
@@ -679,7 +666,7 @@
         <span class="card-badge" style="background:${esc(t.color)}">${esc(t.project)}</span>
         ${dueStr ? `<span class="card-due">${dueStr}</span>` : ''}
         ${hasSubs ? `<span class="subtask-count" onclick="event.stopPropagation();toggleCardExpand(${t.id})" title="Toggle subtasks">
-          ${t.subtask_done}/${t.subtask_total}&nbsp;<span id="cst-arrow-${t.id}">&#9656;</span>
+          ${t.subtask_done}/${t.subtask_total}&nbsp;<span id="cst-arrow-${t.id}">${collapsed ? '&#9656;' : '&#9662;'}</span>
         </span>` : ''}
         <div class="card-actions" onclick="event.stopPropagation()">
           <button class="card-btn ${t.flagged ? 'on' : ''}" title="${t.flagged ? 'Remove flag' : 'Flag'}"
@@ -691,7 +678,9 @@
           }
         </div>
       </div>
-      ${hasSubs ? `<div class="card-subtasks" id="cst-${t.id}" style="display:none"></div>` : ''}
+      ${hasSubs ? `<div class="card-subtasks" id="cst-${t.id}" style="display:${collapsed ? 'none' : 'block'}">
+        ${subs.map(s => cardSubtaskRowHTML(s, t.id)).join('')}
+      </div>` : ''}
     </div>`;
   }
 
@@ -897,7 +886,7 @@
     document.getElementById('project-filters').innerHTML = projects.map(p => {
       const task = allTasks.find(t => t.project === p);
       const color = task ? task.color : '#555';
-      const active = subFilter === p;
+      const active = subFilters.has(p);
       return `<button class="filter-pill ${active ? 'active' : ''}"
         style="${active ? `background:${color};border-color:${color};color:#fff` : ''}"
         onclick="setSubFilter('${esc(p)}')">${esc(p)}</button>`;
@@ -906,7 +895,7 @@
 
   function setFamilyFilter(fam) {
     familyFilter = fam;
-    subFilter = null;
+    subFilters.clear();
     document.querySelectorAll('.filter-pill[data-family]').forEach(b =>
       b.classList.toggle('active', b.dataset.family === fam));
     renderBoard();
@@ -914,7 +903,7 @@
   }
 
   function setSubFilter(p) {
-    subFilter = (subFilter === p) ? null : p;
+    if (subFilters.has(p)) subFilters.delete(p); else subFilters.add(p);
     renderBoard();
     renderProjectFilters();
   }
@@ -1360,22 +1349,18 @@
     </div>`;
   }
 
-  async function toggleCardExpand(id) {
+  function toggleCardExpand(id) {
     const el    = document.getElementById(`cst-${id}`);
     const arrow = document.getElementById(`cst-arrow-${id}`);
     if (!el) return;
-    if (expandedCards.has(id)) {
-      expandedCards.delete(id);
-      el.style.display = 'none';
-      el.innerHTML = '';
-      if (arrow) arrow.innerHTML = '&#9656;';
-    } else {
-      expandedCards.add(id);
+    if (collapsedCards.has(id)) {
+      collapsedCards.delete(id);
       el.style.display = 'block';
       if (arrow) arrow.innerHTML = '&#9662;';
-      const r    = await fetch(`/api/tasks/${id}/subtasks`);
-      const subs = await r.json();
-      el.innerHTML = subs.map(s => cardSubtaskRowHTML(s, id)).join('');
+    } else {
+      collapsedCards.add(id);
+      el.style.display = 'none';
+      if (arrow) arrow.innerHTML = '&#9656;';
     }
   }
 

@@ -492,7 +492,23 @@ def get_tasks():
             f"SELECT t.*, {sub_counts} FROM tasks t WHERE (t.archived IS NULL OR t.archived=0) AND t.user_id=? ORDER BY t.flagged DESC, t.created_at DESC",
             (uid,)
         ).fetchall()
-    return jsonify([dict(t) for t in tasks])
+    task_list = [dict(t) for t in tasks]
+    task_ids = [t['id'] for t in task_list]
+    subtasks_by_task = {}
+    if task_ids:
+        placeholders = ','.join('?' * len(task_ids))
+        sub_rows = db.execute(
+            f"SELECT * FROM subtasks WHERE task_id IN ({placeholders}) ORDER BY created_at",
+            task_ids
+        ).fetchall()
+        for r in sub_rows:
+            sd = dict(r)
+            if not sd.get('status'):
+                sd['status'] = 'done' if sd.get('completed') else 'todo'
+            subtasks_by_task.setdefault(sd['task_id'], []).append(sd)
+    for t in task_list:
+        t['subtasks'] = subtasks_by_task.get(t['id'], [])
+    return jsonify(task_list)
 
 
 @app.route("/api/tasks", methods=["POST"])
