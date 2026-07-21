@@ -243,6 +243,7 @@
     .subtask-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
     .subtask-dot.todo { background: var(--text-dim); border: 1px solid var(--text-faint); }
     .subtask-dot.in_progress { background: #f59e0b; }
+    .subtask-dot.blocked { background: #dc2626; }
     .subtask-dot.done { background: #22c55e; }
     .card-subtask-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .card-subtask-title.done-text { text-decoration: line-through; opacity: 0.5; }
@@ -1381,6 +1382,7 @@
         <select class="subtask-status-sel" onchange="updateSubtask(${s.id}, {status: this.value})">
           <option value="todo"        ${s.status === 'todo'        ? 'selected' : ''}>To Do</option>
           <option value="in_progress" ${s.status === 'in_progress' ? 'selected' : ''}>In Prog</option>
+          <option value="blocked"     ${s.status === 'blocked'     ? 'selected' : ''}>Blocked</option>
           <option value="done"        ${s.status === 'done'        ? 'selected' : ''}>Done</option>
         </select>
         <span class="subtask-title ${s.status === 'done' ? 'done-text' : ''}">${esc(s.title)}</span>
