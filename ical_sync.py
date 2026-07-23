@@ -111,6 +111,7 @@ def fetch_ical_events(url, mappings=None, colors=None):
             "source": "Canvas",
             "color": color,
             "course": course,
+            "code": code,
             "description": raw_desc or None,
         })
     return events

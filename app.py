@@ -167,10 +167,11 @@ def init_db():
         color TEXT,
         UNIQUE(user_id, course_code)
     )""")
-    try:
-        db.execute("ALTER TABLE course_mappings ADD COLUMN color TEXT")
-    except Exception:
-        pass
+    for col, defn in [("color", "TEXT"), ("kanban", "INTEGER DEFAULT 1")]:
+        try:
+            db.execute(f"ALTER TABLE course_mappings ADD COLUMN {col} {defn}")
+        except Exception:
+            pass
     db.execute("""CREATE TABLE IF NOT EXISTS subtasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         task_id INTEGER NOT NULL,
@@ -804,6 +805,15 @@ def _get_user_mapping_colors(db=None):
     return {r["course_code"]: r["color"] for r in rows}
 
 
+def _get_kanban_disabled_codes(db=None):
+    db = db or get_db()
+    rows = db.execute(
+        "SELECT course_code FROM course_mappings WHERE user_id=? AND kanban=0",
+        (current_user.id,)
+    ).fetchall()
+    return {r["course_code"] for r in rows}
+
+
 @app.route("/api/canvas/ical", methods=["GET"])
 def get_canvas_ical():
     row = get_db().execute(
@@ -855,11 +865,37 @@ def get_canvas_courses():
 @app.route("/api/canvas/course-mappings", methods=["GET"])
 def get_course_mappings():
     rows = get_db().execute(
-        "SELECT course_code, course_name, color FROM course_mappings WHERE user_id=? ORDER BY course_name",
+        "SELECT course_code, course_name, color, kanban FROM course_mappings WHERE user_id=? ORDER BY course_name",
         (current_user.id,)
     ).fetchall()
     return jsonify([{"code": r["course_code"], "name": r["course_name"],
-                     "color": r["color"] or "#818cf8"} for r in rows])
+                     "color": r["color"] or "#818cf8",
+                     "kanban": r["kanban"] if r["kanban"] is not None else 1} for r in rows])
+
+
+@app.route("/api/canvas/course-mappings/kanban", methods=["POST"])
+def update_mapping_kanban():
+    data = request.json
+    code = data.get("code", "")
+    kanban = 1 if data.get("kanban") else 0
+    db = get_db()
+    row = db.execute(
+        "SELECT course_name FROM course_mappings WHERE user_id=? AND course_code=?",
+        (current_user.id, code)
+    ).fetchone()
+    db.execute(
+        "UPDATE course_mappings SET kanban=? WHERE user_id=? AND course_code=?",
+        (kanban, current_user.id, code)
+    )
+    removed = 0
+    if row and not kanban:
+        nm = row["course_name"].lower().strip()
+        removed = db.execute(
+            "SELECT COUNT(*) FROM tasks WHERE LOWER(project)=? AND user_id=?", (nm, current_user.id)
+        ).fetchone()[0]
+        db.execute("DELETE FROM tasks WHERE LOWER(project)=? AND user_id=?", (nm, current_user.id))
+    db.commit()
+    return jsonify({"ok": True, "removed": removed})
 
 
 @app.route("/api/canvas/course-mappings/color", methods=["POST"])
@@ -935,6 +971,7 @@ def sync_canvas_ical_now():
         mappings = _get_user_mappings(db)
         events = fetch_ical_events(row["url"], mappings=mappings)
         uid = current_user.id
+        kanban_disabled = _get_kanban_disabled_codes(db)
         existing = {t["title"] for t in db.execute(
             "SELECT title FROM tasks WHERE user_id=?", (uid,)
         ).fetchall()}
@@ -942,8 +979,12 @@ def sync_canvas_ical_now():
         added = 0
         skipped_session = 0
         skipped_dupe = 0
+        skipped_hidden = 0
         for e in events:
             title = e["title"]
+            if e.get("code") in kanban_disabled:
+                skipped_hidden += 1
+                continue
             if any(title.lower().startswith(p) for p in SKIP_PATTERNS):
                 skipped_session += 1
                 continue
@@ -963,7 +1004,8 @@ def sync_canvas_ical_now():
         return jsonify({"ok": True, "added": added,
                         "total": len(events),
                         "skipped_session": skipped_session,
-                        "skipped_dupe": skipped_dupe})
+                        "skipped_dupe": skipped_dupe,
+                        "skipped_hidden": skipped_hidden})
     except Exception as e:
         print(f"[sync error] {traceback.format_exc()}", flush=True)
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500

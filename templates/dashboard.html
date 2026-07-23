@@ -1210,6 +1210,12 @@
             onchange='updateMappingColor(${JSON.stringify(m.code)}, this.value)' />
           <span style="flex:1;font-size:13px;color:var(--text)">${esc(m.name)}</span>
           <span style="font-size:11px;color:var(--text-faint)">${esc(m.code)}</span>
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-muted);
+                        cursor:pointer;flex-shrink:0" title="When off, this course's assignments only show on the calendar, not the kanban board">
+            <input type="checkbox" ${m.kanban ? 'checked' : ''}
+              onchange='toggleMappingKanban(${JSON.stringify(m.code)}, this.checked)' />
+            Show in Kanban
+          </label>
           <button class="btn btn-secondary"
             style="padding:3px 10px;font-size:11px;color:#f87171;flex-shrink:0"
             onclick='deleteMapping(${JSON.stringify(m.code)})'>Remove</button>
@@ -1222,6 +1228,15 @@
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({code, color})
+    });
+    loadTasks();
+  }
+
+  async function toggleMappingKanban(code, checked) {
+    await fetch('/api/canvas/course-mappings/kanban', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({code, kanban: checked})
     });
     loadTasks();
   }
@@ -1309,12 +1324,13 @@
       if (d.ok) {
         const n = d.added ?? 0;
         msg.style.color = '#4ade80';
+        const hiddenNote = d.skipped_hidden ? `, ${d.skipped_hidden} hidden from kanban` : '';
         if (n > 0) {
-          msg.textContent = `Synced! ${n} assignment${n === 1 ? '' : 's'} added.`;
+          msg.textContent = `Synced! ${n} assignment${n === 1 ? '' : 's'} added${hiddenNote}.`;
         } else if ((d.total ?? 0) === 0) {
           msg.textContent = 'Synced! Feed returned no events — check your URL.';
         } else {
-          msg.textContent = `Synced! ${d.total} events found, ${d.skipped_session} class sessions, ${d.skipped_dupe} already on board.`;
+          msg.textContent = `Synced! ${d.total} events found, ${d.skipped_session} class sessions, ${d.skipped_dupe} already on board${hiddenNote}.`;
         }
         loadTasks();
         loadMappings();
