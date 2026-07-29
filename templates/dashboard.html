@@ -107,6 +107,8 @@
     .card:hover { border-color: var(--accent); transform: translateY(-1px);
                   box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
     .card.flagged { border-left: 3px solid #f59e0b; }
+    .card.due-tomorrow { border-right: 3px solid #f59e0b; }
+    .card.due-today { border-right: 3px solid #dc2626; }
     .card-title { font-size: 13px; line-height: 1.45; margin-bottom: 9px; color: var(--text); }
     .card-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .card-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; color: #fff;
@@ -122,6 +124,8 @@
                  line-height: 1.45; white-space: pre-wrap; display: -webkit-box;
                  -webkit-line-clamp: 7; -webkit-box-orient: vertical; overflow: hidden; }
     .card-due  { font-size: 11px; color: var(--text-faint); white-space: nowrap; flex-shrink: 0; }
+    .card-due.due-tomorrow { color: #fff; background: #f59e0b; padding: 2px 7px; border-radius: 8px; font-weight: 600; }
+    .card-due.due-today { color: #fff; background: #dc2626; padding: 2px 7px; border-radius: 8px; font-weight: 600; }
     .priority-badge { font-size: 10px; padding: 2px 7px; border-radius: 8px; color: #fff;
                       text-transform: uppercase; letter-spacing: 0.04em; flex-shrink: 0; }
     .priority-badge.priority-high   { background: #dc2626; }
@@ -186,6 +190,8 @@
     .subtask-item:last-child { border-bottom: none; }
     .subtask-item.dragging { opacity: 0.35; }
     .subtask-item .done-text { text-decoration: line-through; color: var(--text-faint); }
+    .subtask-item.due-tomorrow { background: rgba(245,158,11,0.12); border-radius: 6px; }
+    .subtask-item.due-today { background: rgba(220,38,38,0.12); border-radius: 6px; }
     .status-update-item { padding: 7px 0; border-bottom: 1px solid var(--border-sub); }
     .status-update-item:last-child { border-bottom: none; }
     .status-update-row { display: flex; align-items: flex-start; gap: 6px; }
@@ -239,6 +245,8 @@
                         font-size: 11px; color: var(--text-muted); border-radius: 4px;
                         cursor: pointer; }
     .card-subtask-row:hover { background: var(--surface-btn); }
+    .card-subtask-row.due-tomorrow { background: rgba(245,158,11,0.15); }
+    .card-subtask-row.due-today { background: rgba(220,38,38,0.15); }
     .card-subtask-empty { font-size: 11px; color: var(--text-faint); padding: 3px 4px; }
     .subtask-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
     .subtask-dot.todo { background: var(--text-dim); border: 1px solid var(--text-faint); }
@@ -248,6 +256,8 @@
     .card-subtask-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .card-subtask-title.done-text { text-decoration: line-through; opacity: 0.5; }
     .card-subtask-due { color: var(--text-faint); white-space: nowrap; flex-shrink: 0; font-size: 10px; }
+    .card-subtask-due.due-tomorrow { color: #f59e0b; font-weight: 700; }
+    .card-subtask-due.due-today { color: #dc2626; font-weight: 700; }
     .detail-group-row { display: flex; gap: 8px; }
     .detail-group-row select, .detail-group-row input {
       background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
@@ -318,6 +328,8 @@
     .cal-cell { border-right: 1px solid var(--border-sub); border-bottom: 1px solid var(--border-sub);
                 height: 52px; position: relative; padding: 2px 3px; overflow: hidden; }
     .cal-cell:last-child { border-right: none; }
+    .cal-allday-cell { height: auto; min-height: 26px; overflow: visible;
+                        border-bottom: 2px solid var(--border); background: var(--surface-low); }
     .cal-event { border-radius: 3px; padding: 2px 5px; font-size: 10px; overflow: hidden;
                  white-space: nowrap; text-overflow: ellipsis; color: #fff;
                  margin-bottom: 1px; line-height: 1.3; }
@@ -617,7 +629,7 @@
   const sourcesEnabled = {};
   const collapsedCards = new Set(); // subtasks are shown by default; ids in here are manually collapsed
   const SOURCE_COLORS = {
-    Google: '#2563EB', Outlook: '#0078D4', iCloud: '#6B21A8'
+    Google: '#2563EB', Outlook: '#0078D4', iCloud: '#6B21A8', Kanban: '#8B5CF6'
   };
   const STATUS_CYCLE = { todo: 'in_progress', in_progress: 'done', done: 'todo', blocked: 'in_progress' };
   const STATUS_LABEL = { todo: 'To Do', in_progress: 'In Progress', done: 'Done', blocked: 'Blocked' };
@@ -633,6 +645,20 @@
     try {
       return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     } catch { return ''; }
+  }
+
+  // Returns 'today' | 'tomorrow' | null based on the date portion only (no timezone re-parse pitfalls)
+  function dueBucket(due) {
+    if (!due) return null;
+    const [y, m, d] = due.slice(0, 10).split('-').map(Number);
+    if (!y || !m || !d) return null;
+    const dueDate = new Date(y, m - 1, d).getTime();
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const oneDay = 24 * 60 * 60 * 1000;
+    if (dueDate === today) return 'today';
+    if (dueDate === today + oneDay) return 'tomorrow';
+    return null;
   }
 
   // ── Tab switching ──
@@ -697,15 +723,30 @@
 
   }
 
+  // 'today' if the task or any subtask is due today, else 'tomorrow' if due tomorrow, else null.
+  // Lets the parent card surface an urgent subtask even while collapsed.
+  function cardDueBucket(t) {
+    let best = dueBucket(t.due_date);
+    if (best === 'today') return 'today';
+    (t.subtasks || []).forEach(s => {
+      const b = dueBucket(s.due_date);
+      if (b === 'today') best = 'today';
+      else if (b === 'tomorrow' && best !== 'today') best = 'tomorrow';
+    });
+    return best;
+  }
+
   function cardHTML(t) {
     const nextStatus = STATUS_CYCLE[t.status] || 'todo';
     const nextLabel  = STATUS_LABEL[nextStatus];
     const dueStr     = formatDue(t.due_date);
+    const ownDueCls  = dueBucket(t.due_date);
+    const cardDueCls = cardDueBucket(t);
     const subs       = t.subtasks || [];
     const openSubs   = subs.filter(s => s.status !== 'done');
     const hasSubs    = subs.length > 0;
     const collapsed  = collapsedCards.has(t.id);
-    return `<div class="card ${t.flagged ? 'flagged' : ''}"
+    return `<div class="card ${t.flagged ? 'flagged' : ''} ${cardDueCls ? 'due-' + cardDueCls : ''}"
       data-id="${t.id}"
       draggable="true"
       ondragstart="cardDragStart(event,${t.id})"
@@ -716,7 +757,7 @@
       <div class="card-meta">
         <span class="card-badge" style="background:${esc(t.color)}">${esc(t.project)}</span>
         ${t.priority ? `<span class="priority-badge priority-${t.priority}">${t.priority}</span>` : ''}
-        ${dueStr ? `<span class="card-due">${dueStr}</span>` : ''}
+        ${dueStr ? `<span class="card-due ${ownDueCls ? 'due-' + ownDueCls : ''}">${dueStr}</span>` : ''}
         ${hasSubs ? `<span class="subtask-count" onclick="event.stopPropagation();toggleCardExpand(${t.id})" title="Toggle subtasks">
           ${t.subtask_done}/${t.subtask_total}&nbsp;<span id="cst-arrow-${t.id}">${collapsed ? '&#9656;' : '&#9662;'}</span>
         </span>` : ''}
@@ -1056,15 +1097,47 @@
     try {
       const r = await fetch('/api/events');
       calEvents = await r.json();
-      calEvents.forEach(e => {
-        if (e.source && sourcesEnabled[e.source] === undefined)
-          sourcesEnabled[e.source] = true;
-      });
       calLoaded = true;
     } catch (err) {
       calEvents = [];
     }
     renderCalGrid();
+  }
+
+  // Every task/subtask due date, across ALL families/sub-projects (not just the
+  // currently active kanban filter), shown as calendar events so nothing with a
+  // due date is invisible just because a different filter tab is selected.
+  function buildKanbanDueEvents() {
+    const events = [];
+    allTasks.forEach(t => {
+      if (t.due_date) {
+        events.push({
+          title: t.title, start: t.due_date, source: 'Kanban',
+          color: t.color || SOURCE_COLORS.Kanban, taskId: t.id
+        });
+      }
+      (t.subtasks || []).forEach(s => {
+        if (s.due_date) {
+          events.push({
+            title: `${t.title}: ${s.title}`, start: s.due_date, source: 'Kanban',
+            color: t.color || SOURCE_COLORS.Kanban, taskId: t.id
+          });
+        }
+      });
+    });
+    return events;
+  }
+
+  // True for events with no specific time (pure date strings) or whose time falls
+  // outside the displayed hour range — these render in the "All day" row instead
+  // of silently disappearing from the hourly grid.
+  function isCalEventAllDay(e) {
+    if (typeof e.start !== 'string') return false;
+    if (!e.start.includes('T')) return true;
+    try {
+      const h = new Date(e.start).getHours();
+      return h < HOURS[0] || h > HOURS[HOURS.length - 1];
+    } catch { return true; }
   }
 
   function renderCalGrid() {
@@ -1075,7 +1148,13 @@
     document.getElementById('cal-week-label').textContent =
       `${start.toLocaleDateString('en-US', fmt)} – ${endDay.toLocaleDateString('en-US', fmt)}`;
 
-    const sources = [...new Set(calEvents.map(e => e.source).filter(Boolean))];
+    const allEvents = [...calEvents, ...buildKanbanDueEvents()];
+    allEvents.forEach(e => {
+      if (e.source && sourcesEnabled[e.source] === undefined)
+        sourcesEnabled[e.source] = true;
+    });
+
+    const sources = [...new Set(allEvents.map(e => e.source).filter(Boolean))];
     document.getElementById('source-pills').innerHTML = sources.map(s => {
       const color = SOURCE_COLORS[s] || '#555';
       return `<button class="source-pill ${sourcesEnabled[s] ? '' : 'off'}"
@@ -1085,7 +1164,7 @@
 
     // Course color legend (Canvas events only)
     const courseMap = {};
-    calEvents.filter(e => e.source === 'Canvas' && e.course).forEach(e => {
+    allEvents.filter(e => e.source === 'Canvas' && e.course).forEach(e => {
       courseMap[e.course] = e.color;
     });
     document.getElementById('course-legend').innerHTML = Object.entries(courseMap).map(
@@ -1108,6 +1187,36 @@
       grid.appendChild(hdr);
     }
 
+    // All-day row: date-only due dates and out-of-range-hour events
+    const allDayLabel = document.createElement('div');
+    allDayLabel.className = 'time-label';
+    allDayLabel.textContent = 'All day';
+    grid.appendChild(allDayLabel);
+    for (let d = 0; d < 7; d++) {
+      const date = new Date(start);
+      date.setDate(date.getDate() + d);
+      const dayStr = date.toISOString().slice(0, 10);
+
+      const cell = document.createElement('div');
+      cell.className = 'cal-cell cal-allday-cell';
+
+      allEvents.filter(e => {
+        if (!sourcesEnabled[e.source]) return false;
+        if (!isCalEventAllDay(e)) return false;
+        return typeof e.start === 'string' && e.start.slice(0, 10) === dayStr;
+      }).forEach(e => {
+        const ev = document.createElement('div');
+        ev.className = 'cal-event';
+        ev.style.background = e.color || SOURCE_COLORS[e.source] || '#374151';
+        ev.title = e.title;
+        ev.textContent = e.title;
+        if (e.taskId) { ev.style.cursor = 'pointer'; ev.onclick = () => openCard(e.taskId); }
+        cell.appendChild(ev);
+      });
+
+      grid.appendChild(cell);
+    }
+
     // Hour rows
     HOURS.forEach(h => {
       const label = document.createElement('div');
@@ -1123,8 +1232,9 @@
         const cell = document.createElement('div');
         cell.className = 'cal-cell';
 
-        calEvents.filter(e => {
+        allEvents.filter(e => {
           if (!sourcesEnabled[e.source]) return false;
+          if (isCalEventAllDay(e)) return false;
           try {
             const ev = new Date(e.start);
             return ev.toISOString().slice(0, 10) === dayStr && ev.getHours() === h;
@@ -1135,6 +1245,7 @@
           ev.style.background = e.color || SOURCE_COLORS[e.source] || '#374151';
           ev.title = e.title;
           ev.textContent = e.title;
+          if (e.taskId) { ev.style.cursor = 'pointer'; ev.onclick = () => openCard(e.taskId); }
           cell.appendChild(ev);
         });
 
@@ -1391,8 +1502,8 @@
     const done  = currentSubtasks.filter(s => s.status === 'done').length;
     document.getElementById('subtask-progress').textContent = total ? `${done}/${total}` : '';
     const sorted = [...currentSubtasks].sort((a, b) => (a.status === 'done') - (b.status === 'done'));
-    document.getElementById('subtask-list').innerHTML = sorted.map(s => `
-      <div class="subtask-item" data-id="${s.id}" draggable="true"
+    document.getElementById('subtask-list').innerHTML = sorted.map(s => { const dueCls = dueBucket(s.due_date); return `
+      <div class="subtask-item ${dueCls ? 'due-' + dueCls : ''}" data-id="${s.id}" draggable="true"
            ondragstart="subtaskDragStart(event,${s.id})" ondragend="subtaskDragEnd(event)">
         <span class="subtask-drag-handle" title="Drag to reorder">&#8942;&#8942;</span>
         <select class="subtask-status-sel" onchange="updateSubtask(${s.id}, {status: this.value})">
@@ -1408,7 +1519,7 @@
         <button class="subtask-flag-btn ${s.flagged ? 'on' : ''}" title="${s.flagged ? 'Remove flag' : 'Flag'}"
                 onclick="updateSubtask(${s.id}, {flagged: ${s.flagged ? 0 : 1}})">&#x1F6A9;</button>
         <button class="subtask-del" onclick="deleteSubtask(${s.id})" title="Remove">&#x2715;</button>
-      </div>`).join('');
+      </div>`; }).join('');
   }
 
   function subtaskDragStart(e, id) {
@@ -1537,13 +1648,14 @@
 
   // ── Card inline subtask expansion ──
   function cardSubtaskRowHTML(s, cardId) {
-    const due = s.due_date ? formatDue(s.due_date) : '';
-    return `<div class="card-subtask-row"
+    const due    = s.due_date ? formatDue(s.due_date) : '';
+    const dueCls = dueBucket(s.due_date);
+    return `<div class="card-subtask-row ${dueCls ? 'due-' + dueCls : ''}"
       onclick="event.stopPropagation();cycleSubtaskStatus(${s.id},'${s.status}',${cardId})"
       title="Click to cycle status">
       <span class="subtask-dot ${esc(s.status)}"></span>
       <span class="card-subtask-title ${s.status === 'done' ? 'done-text' : ''}">${esc(s.title)}</span>
-      ${due ? `<span class="card-subtask-due">${due}</span>` : ''}
+      ${due ? `<span class="card-subtask-due ${dueCls ? 'due-' + dueCls : ''}">${due}</span>` : ''}
       ${s.flagged ? `<span style="font-size:10px;line-height:1;flex-shrink:0">&#x1F6A9;</span>` : ''}
     </div>`;
   }
