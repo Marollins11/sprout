@@ -48,7 +48,7 @@ auto_idx = 0
 
 VOICE_SYSTEM = """You are Sprout, a voice-first personal desk assistant.
 Respond with EXACTLY ONE structured reply or a plain conversational answer.
-ADD TASK:       TASK|title|family|sub-project
+TASK:           TASK|title|family|sub-project
 MOVE STATUS:    MOVE_STATUS|partial title|new_status  (todo/in_progress/done)
 REASSIGN:       MOVE_PROJECT|partial title|family|new sub-project
 FLAG/UNFLAG:    FLAG|partial title|1 or 0
@@ -236,7 +236,9 @@ def handle_voice_reply(raw, host_url, uid=None):
     action = {}
     db = get_db()
 
-    if raw.startswith("TASK|") or raw.startswith("ADD_TASK|"):
+    if raw.startswith("TASK|") or raw.startswith("ADD_TASK|") or raw.startswith("ADD TASK|"):
+        raw = raw.split("|", 1)[1]
+        raw = "TASK|" + raw
         _, title, family, project = raw.split("|", 3)
         project = project.strip() or family.strip() or "general"
         color = get_or_create_project(project, family, uid=uid)

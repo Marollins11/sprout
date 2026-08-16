@@ -11,7 +11,7 @@ _client = genai.Client(api_key=GEMINI_API_KEY)
 
 SYSTEM = """You are a voice-first personal desk assistant.
 Respond with EXACTLY ONE structured reply or a plain conversational answer.
-ADD TASK:       TASK|title|family|sub-project
+TASK:           TASK|title|family|sub-project
 MOVE STATUS:    MOVE_STATUS|partial title|new_status  (todo/in_progress/done)
 REASSIGN:       MOVE_PROJECT|partial title|family|new sub-project
 FLAG/UNFLAG:    FLAG|partial title|1 or 0
@@ -121,7 +121,8 @@ def find_task(match):
 
 
 def handle_reply(reply):
-    if reply.startswith("TASK|"):
+    if reply.startswith("TASK|") or reply.startswith("ADD_TASK|") or reply.startswith("ADD TASK|"):
+        reply = "TASK|" + reply.split("|", 1)[1]
         _, title, family, project = reply.split("|", 3)
         requests.post(f"{FLASK}/api/tasks",
                       json={"title": title, "family": family, "project": project})
