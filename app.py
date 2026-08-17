@@ -96,7 +96,8 @@ def init_db():
     for col, defn in [("due_date", "TEXT"), ("description", "TEXT"),
                        ("archived", "INTEGER DEFAULT 0"), ("done_at", "TEXT"),
                        ("user_id", "INTEGER"), ("priority", "TEXT"),
-                       ("position", "INTEGER DEFAULT 0")]:
+                       ("position", "INTEGER DEFAULT 0"),
+                       ("notified_48h", "INTEGER DEFAULT 0")]:
         try:
             db.execute(f"ALTER TABLE tasks ADD COLUMN {col} {defn}")
         except Exception:
@@ -562,7 +563,7 @@ def update_task(tid):
             db.execute("UPDATE tasks SET status='done', done_at=? WHERE id=? AND user_id=?",
                        (datetime.now().isoformat(), tid, uid))
     if "flagged"     in d: db.execute("UPDATE tasks SET flagged=?     WHERE id=? AND user_id=?", (d["flagged"], tid, uid))
-    if "due_date"    in d: db.execute("UPDATE tasks SET due_date=?    WHERE id=? AND user_id=?", (d["due_date"], tid, uid))
+    if "due_date"    in d: db.execute("UPDATE tasks SET due_date=?, notified_48h=0 WHERE id=? AND user_id=?", (d["due_date"], tid, uid))
     if "description" in d: db.execute("UPDATE tasks SET description=? WHERE id=? AND user_id=?", (d["description"], tid, uid))
     if "title"       in d: db.execute("UPDATE tasks SET title=?       WHERE id=? AND user_id=?", (d["title"], tid, uid))
     if "priority"    in d: db.execute("UPDATE tasks SET priority=?    WHERE id=? AND user_id=?", (d["priority"] or None, tid, uid))
@@ -1067,6 +1068,7 @@ def google_auth_start():
         GOOGLE_CREDS,
         scopes=[
             "https://www.googleapis.com/auth/calendar.readonly",
+            "https://www.googleapis.com/auth/gmail.send",
             "https://www.googleapis.com/auth/userinfo.email",
             "openid",
         ],
@@ -1088,6 +1090,7 @@ def google_auth_callback():
         GOOGLE_CREDS,
         scopes=[
             "https://www.googleapis.com/auth/calendar.readonly",
+            "https://www.googleapis.com/auth/gmail.send",
             "https://www.googleapis.com/auth/userinfo.email",
             "openid",
         ],
@@ -1206,8 +1209,22 @@ def canvas_auto_loop():
         _time.sleep(30)
 
 
+def due_date_alert_loop():
+    def job():
+        try:
+            from due_date_alerts import send_due_date_alerts
+            send_due_date_alerts()
+        except Exception as e:
+            print(f"Due-date alert error: {e}")
+    sched.every().day.at("08:00").do(job)
+    while True:
+        sched.run_pending()
+        _time.sleep(30)
+
+
 init_db()
 threading.Thread(target=canvas_auto_loop, daemon=True).start()
+threading.Thread(target=due_date_alert_loop, daemon=True).start()
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5001))
