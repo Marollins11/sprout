@@ -378,7 +378,7 @@ def logout():
     return redirect('/login')
 
 
-def _google_flow(redirect_uri):
+def _google_flow(redirect_uri, scopes=None):
     from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
     from google_auth_oauthlib.flow import Flow
     os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -390,18 +390,37 @@ def _google_flow(redirect_uri):
             'token_uri': 'https://oauth2.googleapis.com/token',
             'redirect_uris': [redirect_uri],
         }},
-        scopes=['openid',
+        scopes=scopes or ['openid',
                 'https://www.googleapis.com/auth/userinfo.email',
                 'https://www.googleapis.com/auth/userinfo.profile'],
         redirect_uri=redirect_uri,
     )
 
 
-def _callback_uri():
+def _https_base():
     base = request.host_url.rstrip('/')
     if base.startswith('http://') and not base.startswith('http://127') and not base.startswith('http://localhost'):
         base = 'https://' + base[7:]
-    return base + '/auth/google/callback'
+    return base
+
+
+def _https_response_url():
+    url = request.url
+    if url.startswith('http://') and 'localhost' not in url and '127.0.0.1' not in url:
+        url = 'https://' + url[7:]
+    return url
+
+
+def _callback_uri():
+    return _https_base() + '/auth/google/callback'
+
+
+CALENDAR_GOOGLE_SCOPES = [
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "openid",
+]
 
 
 @app.route('/auth/google/start')
@@ -1061,19 +1080,8 @@ def delete_calendar_account(aid):
 
 @app.route("/api/calendar/auth/google/start")
 def google_auth_start():
-    from google_auth_oauthlib.flow import Flow
-    from config import GOOGLE_CREDS
-    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-    flow = Flow.from_client_secrets_file(
-        GOOGLE_CREDS,
-        scopes=[
-            "https://www.googleapis.com/auth/calendar.readonly",
-            "https://www.googleapis.com/auth/gmail.send",
-            "https://www.googleapis.com/auth/userinfo.email",
-            "openid",
-        ],
-        redirect_uri=request.host_url.rstrip("/") + "/api/calendar/auth/google/callback"
-    )
+    redirect_uri = _https_base() + "/api/calendar/auth/google/callback"
+    flow = _google_flow(redirect_uri, scopes=CALENDAR_GOOGLE_SCOPES)
     auth_url, state = flow.authorization_url(access_type="offline", include_granted_scopes="true")
     session["google_state"] = state
     return redirect(auth_url)
@@ -1081,23 +1089,11 @@ def google_auth_start():
 
 @app.route("/api/calendar/auth/google/callback")
 def google_auth_callback():
-    from google_auth_oauthlib.flow import Flow
-    from config import GOOGLE_CREDS
     import requests as req
-    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-    redirect_uri = request.host_url.rstrip("/") + "/api/calendar/auth/google/callback"
-    flow = Flow.from_client_secrets_file(
-        GOOGLE_CREDS,
-        scopes=[
-            "https://www.googleapis.com/auth/calendar.readonly",
-            "https://www.googleapis.com/auth/gmail.send",
-            "https://www.googleapis.com/auth/userinfo.email",
-            "openid",
-        ],
-        redirect_uri=redirect_uri,
-        state=session.get("google_state")
-    )
-    flow.fetch_token(authorization_response=request.url)
+    redirect_uri = _https_base() + "/api/calendar/auth/google/callback"
+    flow = _google_flow(redirect_uri, scopes=CALENDAR_GOOGLE_SCOPES)
+    flow.state = session.get("google_state")
+    flow.fetch_token(authorization_response=_https_response_url())
     creds = flow.credentials
     r = req.get(f"https://www.googleapis.com/oauth2/v1/userinfo?access_token={creds.token}")
     email = r.json().get("email", "Google Account")

@@ -1,12 +1,9 @@
 import os
 
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 FLASK_SECRET         = os.getenv("FLASK_SECRET",      "replace-this-with-a-long-random-string")
 GEMINI_API_KEY       = os.getenv("GEMINI_API_KEY")
 GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-GOOGLE_CREDS         = os.path.join(_BASE_DIR, "credentials.json")
 OUTLOOK_CLIENT_ID    = os.getenv("OUTLOOK_CLIENT_ID")
 OUTLOOK_SECRET       = os.getenv("OUTLOOK_SECRET")
 OUTLOOK_TENANT       = os.getenv("OUTLOOK_TENANT",    "consumers")
