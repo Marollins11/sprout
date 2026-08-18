@@ -112,7 +112,7 @@ def get_icloud_events(account):
             v = e.vobject_instance.vevent
             events.append({
                 "title": str(v.summary.value),
-                "start": str(v.dtstart.value),
+                "start": v.dtstart.value.isoformat(),
                 "source": "iCloud",
                 "color": "#7C3AED"
             })
