@@ -3,8 +3,8 @@ from flask import Flask, jsonify, request, render_template, redirect, session, u
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
-import sqlite3, threading, time as _time, schedule as sched, os, json, secrets, traceback
-from datetime import datetime
+import sqlite3, threading, time as _time, schedule as sched, os, json, secrets, traceback, calendar
+from datetime import datetime, date, timedelta
 from google import genai
 
 app = Flask(__name__)
@@ -97,7 +97,8 @@ def init_db():
                        ("archived", "INTEGER DEFAULT 0"), ("done_at", "TEXT"),
                        ("user_id", "INTEGER"), ("priority", "TEXT"),
                        ("position", "INTEGER DEFAULT 0"),
-                       ("notified_48h", "INTEGER DEFAULT 0")]:
+                       ("notified_48h", "INTEGER DEFAULT 0"),
+                       ("recurrence", "TEXT")]:
         try:
             db.execute(f"ALTER TABLE tasks ADD COLUMN {col} {defn}")
         except Exception:
@@ -228,6 +229,24 @@ def get_or_create_project(name, family, db=None, uid=None):
     if _own:
         db.commit()
     return "#" + color
+
+
+def _next_recurrence_date(due_date, recurrence):
+    """Compute the next due date for a recurring task, based off its prior due date."""
+    base = date.fromisoformat(due_date[:10]) if due_date else date.today()
+    if recurrence == "daily":
+        nxt = base + timedelta(days=1)
+    elif recurrence == "weekly":
+        nxt = base + timedelta(weeks=1)
+    elif recurrence == "monthly":
+        month, year = base.month + 1, base.year
+        if month > 12:
+            month, year = 1, year + 1
+        last_day = calendar.monthrange(year, month)[1]
+        nxt = date(year, month, min(base.day, last_day))
+    else:
+        nxt = base + timedelta(days=1)
+    return nxt.isoformat()
 
 
 # ── Voice command handler ────────────────────────────────────────────────────
@@ -555,11 +574,12 @@ def add_task():
         "SELECT COALESCE(MAX(position), -1) + 1 FROM tasks WHERE user_id=? AND status='todo'", (uid,)
     ).fetchone()[0]
     db.execute(
-        "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description,user_id,priority,position) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description,user_id,priority,position,recurrence) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         (d["title"], "todo", project,
          family, color, datetime.now().isoformat(),
-         d.get("due_date"), d.get("description"), uid, d.get("priority") or None, next_pos)
+         d.get("due_date"), d.get("description"), uid, d.get("priority") or None, next_pos,
+         d.get("recurrence") or None)
     )
     db.commit()
     return jsonify({"ok": True, "color": color})
@@ -575,6 +595,13 @@ def update_task(tid):
         db.execute("UPDATE tasks SET status=? WHERE id=? AND user_id=?", (new_status, tid, uid))
         if new_status == "done":
             db.execute("UPDATE tasks SET done_at=? WHERE id=? AND user_id=?", (datetime.now().isoformat(), tid, uid))
+            task = db.execute("SELECT due_date, recurrence FROM tasks WHERE id=? AND user_id=?", (tid, uid)).fetchone()
+            if task and task["recurrence"]:
+                next_due = _next_recurrence_date(task["due_date"], task["recurrence"])
+                db.execute(
+                    "UPDATE tasks SET status='todo', due_date=?, notified_48h=0 WHERE id=? AND user_id=?",
+                    (next_due, tid, uid)
+                )
         else:
             db.execute("UPDATE tasks SET done_at=NULL WHERE id=? AND user_id=?", (tid, uid))
     if "archived" in d:
@@ -587,6 +614,7 @@ def update_task(tid):
     if "description" in d: db.execute("UPDATE tasks SET description=? WHERE id=? AND user_id=?", (d["description"], tid, uid))
     if "title"       in d: db.execute("UPDATE tasks SET title=?       WHERE id=? AND user_id=?", (d["title"], tid, uid))
     if "priority"    in d: db.execute("UPDATE tasks SET priority=?    WHERE id=? AND user_id=?", (d["priority"] or None, tid, uid))
+    if "recurrence"  in d: db.execute("UPDATE tasks SET recurrence=?  WHERE id=? AND user_id=?", (d["recurrence"] or None, tid, uid))
     color = None
     if "project" in d:
         project = d["project"].strip().lower()
@@ -617,6 +645,18 @@ def reorder_tasks():
     for idx, tid in enumerate(order):
         if status is not None:
             db.execute("UPDATE tasks SET status=?, position=? WHERE id=? AND user_id=?", (status, idx, tid, uid))
+            if status == "done":
+                db.execute("UPDATE tasks SET done_at=? WHERE id=? AND user_id=?", (datetime.now().isoformat(), tid, uid))
+                task = db.execute("SELECT due_date, recurrence FROM tasks WHERE id=? AND user_id=?", (tid, uid)).fetchone()
+                if task and task["recurrence"]:
+                    next_due = _next_recurrence_date(task["due_date"], task["recurrence"])
+                    next_pos = db.execute(
+                        "SELECT COALESCE(MAX(position), -1) + 1 FROM tasks WHERE user_id=? AND status='todo'", (uid,)
+                    ).fetchone()[0]
+                    db.execute(
+                        "UPDATE tasks SET status='todo', due_date=?, notified_48h=0, position=? WHERE id=? AND user_id=?",
+                        (next_due, next_pos, tid, uid)
+                    )
         else:
             db.execute("UPDATE tasks SET position=? WHERE id=? AND user_id=?", (idx, tid, uid))
     db.commit()

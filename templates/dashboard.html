@@ -571,6 +571,15 @@
       <input type="date" id="task-due" />
     </div>
     <div class="form-row">
+      <label>Repeat</label>
+      <select id="task-recurrence">
+        <option value="">Never</option>
+        <option value="daily">Daily</option>
+        <option value="weekly">Weekly</option>
+        <option value="monthly">Monthly</option>
+      </select>
+    </div>
+    <div class="form-row">
       <label>Priority</label>
       <select id="task-priority">
         <option value="">None</option>
@@ -837,6 +846,7 @@
     badge.textContent = t.project;
     badge.style.background = t.color;
     document.getElementById('detail-due-input').value = t.due_date ? t.due_date.slice(0, 10) : '';
+    document.getElementById('detail-recurrence').value = t.recurrence || '';
     document.getElementById('detail-family').value = t.family || 'personal';
     document.getElementById('detail-project').value = t.project || '';
     const descEl = document.getElementById('detail-desc');
@@ -895,6 +905,17 @@
     loadTasks();
   }
 
+  async function saveDetailRecurrence() {
+    if (!currentCardId) return;
+    const recurrence = document.getElementById('detail-recurrence').value || null;
+    await fetch(`/api/tasks/${currentCardId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recurrence })
+    });
+    loadTasks();
+  }
+
   async function saveDetailGroup() {
     if (!currentCardId) return;
     const family  = document.getElementById('detail-family').value;
@@ -943,9 +964,15 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status })
     });
-    document.querySelectorAll('#detail-status-btns .status-btn').forEach(b =>
-      b.classList.toggle('active', b.dataset.status === status));
-    loadTasks();
+    await loadTasks();
+    // A recurring task bounces back to "todo" server-side on completion,
+    // so re-sync from the reloaded task instead of trusting the clicked status.
+    const t = allTasks.find(t => t.id === currentCardId);
+    if (t) {
+      document.querySelectorAll('#detail-status-btns .status-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.status === t.status));
+      document.getElementById('detail-due-input').value = t.due_date ? t.due_date.slice(0, 10) : '';
+    }
   }
 
   async function setDetailPriority(priority) {
@@ -1042,6 +1069,7 @@
     document.getElementById('task-project').value = '';
     document.getElementById('task-family').value = (familyFilter !== 'all') ? familyFilter : 'personal';
     document.getElementById('task-due').value = '';
+    document.getElementById('task-recurrence').value = '';
     document.getElementById('task-priority').value = '';
     document.getElementById('task-desc').value = '';
     document.getElementById('modal').classList.add('show');
@@ -1062,12 +1090,13 @@
     const family      = document.getElementById('task-family').value;
     const project     = document.getElementById('task-project').value.trim() || family;
     const due_date    = document.getElementById('task-due').value || null;
+    const recurrence  = document.getElementById('task-recurrence').value || null;
     const priority    = document.getElementById('task-priority').value || null;
     const description = document.getElementById('task-desc').value.trim() || null;
     await fetch('/api/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, family, project, due_date, priority, description })
+      body: JSON.stringify({ title, family, project, due_date, recurrence, priority, description })
     });
     closeModal();
     loadTasks();
@@ -1813,6 +1842,15 @@
       <div class="detail-label">Due Date</div>
       <input type="date" class="detail-date-input" id="detail-due-input"
              onchange="saveDetailDue()" />
+    </div>
+    <div class="detail-section">
+      <div class="detail-label">Repeat</div>
+      <select id="detail-recurrence" onchange="saveDetailRecurrence()">
+        <option value="">Never</option>
+        <option value="daily">Daily</option>
+        <option value="weekly">Weekly</option>
+        <option value="monthly">Monthly</option>
+      </select>
     </div>
     <div class="detail-section">
       <div class="detail-label">Group &amp; Sub-project</div>
