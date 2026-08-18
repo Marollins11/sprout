@@ -9,6 +9,7 @@ from google import genai
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 DB = os.getenv("DATABASE_PATH", "tasks.db")
 
 from config import FLASK_SECRET, GEMINI_API_KEY
@@ -46,7 +47,7 @@ FAMILY_PALETTES = {
 AUTO_PALETTE = ["C25100", "0E7490", "B45309", "BE185D", "065F46", "1D4ED8"]
 auto_idx = 0
 
-VOICE_SYSTEM = """You are Sprout, a voice-first personal desk assistant.
+VOICE_SYSTEM = """You are Sprout, a voice-first personal assistant.
 Respond with EXACTLY ONE structured reply or a plain conversational answer.
 TASK:           TASK|title|family|sub-project
 MOVE STATUS:    MOVE_STATUS|partial title|new_status  (todo/in_progress/done)
@@ -376,7 +377,7 @@ def login():
                 return redirect('/login')
             db.execute(
                 "INSERT INTO users (email,password_hash,created_at) VALUES (?,?,?)",
-                (email, generate_password_hash(password), datetime.now().isoformat())
+                (email, generate_password_hash(password, method='pbkdf2:sha256'), datetime.now().isoformat())
             )
             db.commit()
             row = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()

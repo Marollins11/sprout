@@ -9,7 +9,7 @@ from config import GEMINI_API_KEY
 
 _client = genai.Client(api_key=GEMINI_API_KEY)
 
-SYSTEM = """You are a voice-first personal desk assistant.
+SYSTEM = """You are Sprout, a voice-first personal assistant.
 Respond with EXACTLY ONE structured reply or a plain conversational answer.
 TASK:           TASK|title|family|sub-project
 MOVE STATUS:    MOVE_STATUS|partial title|new_status  (todo/in_progress/done)
@@ -200,7 +200,7 @@ def main():
     )
     chat = gemini_model.start_chat(history=[])
     threading.Thread(target=reminder_loop, daemon=True).start()
-    speak("Desk assistant ready. Say Sprout to wake me.")
+    speak("Sprout ready.")
 
     while True:
         wait_for_wake_word(stream, vad)
