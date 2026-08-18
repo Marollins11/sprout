@@ -1042,8 +1042,10 @@
   }
 
   function renderProjectFilters() {
-    const source = familyFilter === 'all' ? allTasks : allTasks.filter(t => t.family === familyFilter);
+    const source = (familyFilter === 'all' ? allTasks : allTasks.filter(t => t.family === familyFilter))
+      .filter(t => t.status !== 'done');
     const projects = [...new Set(source.map(t => t.project))].sort();
+    [...subFilters].forEach(p => { if (!projects.includes(p)) subFilters.delete(p); });
     document.getElementById('project-filters').innerHTML = projects.map(p => {
       const task = allTasks.find(t => t.project === p);
       const color = task ? task.color : '#555';
