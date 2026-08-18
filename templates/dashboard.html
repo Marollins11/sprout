@@ -571,13 +571,16 @@
       <input type="date" id="task-due" />
     </div>
     <div class="form-row">
-      <label>Repeat</label>
-      <select id="task-recurrence">
-        <option value="">Never</option>
-        <option value="daily">Daily</option>
-        <option value="weekly">Weekly</option>
-        <option value="monthly">Monthly</option>
-      </select>
+      <label>Repeat every</label>
+      <div class="detail-group-row">
+        <input type="number" id="task-recurrence-interval" min="1" value="1" style="max-width:70px" />
+        <select id="task-recurrence" onchange="toggleRecurrenceInterval('task')">
+          <option value="">Never</option>
+          <option value="daily">Day(s)</option>
+          <option value="weekly">Week(s)</option>
+          <option value="monthly">Month(s)</option>
+        </select>
+      </div>
     </div>
     <div class="form-row">
       <label>Priority</label>
@@ -847,6 +850,8 @@
     badge.style.background = t.color;
     document.getElementById('detail-due-input').value = t.due_date ? t.due_date.slice(0, 10) : '';
     document.getElementById('detail-recurrence').value = t.recurrence || '';
+    document.getElementById('detail-recurrence-interval').value = t.recurrence_interval || 1;
+    toggleRecurrenceInterval('detail');
     document.getElementById('detail-family').value = t.family || 'personal';
     document.getElementById('detail-project').value = t.project || '';
     const descEl = document.getElementById('detail-desc');
@@ -908,10 +913,11 @@
   async function saveDetailRecurrence() {
     if (!currentCardId) return;
     const recurrence = document.getElementById('detail-recurrence').value || null;
+    const recurrence_interval = Math.max(1, parseInt(document.getElementById('detail-recurrence-interval').value, 10) || 1);
     await fetch(`/api/tasks/${currentCardId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recurrence })
+      body: JSON.stringify({ recurrence, recurrence_interval })
     });
     loadTasks();
   }
@@ -1070,6 +1076,8 @@
     document.getElementById('task-family').value = (familyFilter !== 'all') ? familyFilter : 'personal';
     document.getElementById('task-due').value = '';
     document.getElementById('task-recurrence').value = '';
+    document.getElementById('task-recurrence-interval').value = 1;
+    toggleRecurrenceInterval('task');
     document.getElementById('task-priority').value = '';
     document.getElementById('task-desc').value = '';
     document.getElementById('modal').classList.add('show');
@@ -1084,6 +1092,11 @@
     if (e.target === document.getElementById('modal')) closeModal();
   }
 
+  function toggleRecurrenceInterval(prefix) {
+    const recurrence = document.getElementById(`${prefix}-recurrence`).value;
+    document.getElementById(`${prefix}-recurrence-interval`).style.display = recurrence ? '' : 'none';
+  }
+
   async function submitTask() {
     const title = document.getElementById('task-title').value.trim();
     if (!title) { document.getElementById('task-title').focus(); return; }
@@ -1091,12 +1104,13 @@
     const project     = document.getElementById('task-project').value.trim() || family;
     const due_date    = document.getElementById('task-due').value || null;
     const recurrence  = document.getElementById('task-recurrence').value || null;
+    const recurrence_interval = Math.max(1, parseInt(document.getElementById('task-recurrence-interval').value, 10) || 1);
     const priority    = document.getElementById('task-priority').value || null;
     const description = document.getElementById('task-desc').value.trim() || null;
     await fetch('/api/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, family, project, due_date, recurrence, priority, description })
+      body: JSON.stringify({ title, family, project, due_date, recurrence, recurrence_interval, priority, description })
     });
     closeModal();
     loadTasks();
@@ -1844,13 +1858,17 @@
              onchange="saveDetailDue()" />
     </div>
     <div class="detail-section">
-      <div class="detail-label">Repeat</div>
-      <select id="detail-recurrence" onchange="saveDetailRecurrence()">
-        <option value="">Never</option>
-        <option value="daily">Daily</option>
-        <option value="weekly">Weekly</option>
-        <option value="monthly">Monthly</option>
-      </select>
+      <div class="detail-label">Repeat every</div>
+      <div class="detail-group-row">
+        <input type="number" id="detail-recurrence-interval" min="1" value="1" style="max-width:70px"
+               onchange="saveDetailRecurrence()" />
+        <select id="detail-recurrence" onchange="toggleRecurrenceInterval('detail'); saveDetailRecurrence()">
+          <option value="">Never</option>
+          <option value="daily">Day(s)</option>
+          <option value="weekly">Week(s)</option>
+          <option value="monthly">Month(s)</option>
+        </select>
+      </div>
     </div>
     <div class="detail-section">
       <div class="detail-label">Group &amp; Sub-project</div>
