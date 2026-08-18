@@ -1,6 +1,7 @@
 google-genai
 flask
 caldav
+vobject
 requests
 schedule
 google-api-python-client

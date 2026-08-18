@@ -1083,7 +1083,7 @@ def delete_calendar_account(aid):
 def google_auth_start():
     redirect_uri = _https_base() + "/api/calendar/auth/google/callback"
     flow = _google_flow(redirect_uri, scopes=CALENDAR_GOOGLE_SCOPES)
-    auth_url, state = flow.authorization_url(access_type="offline", include_granted_scopes="true")
+    auth_url, state = flow.authorization_url(access_type="offline", include_granted_scopes="true", prompt="consent")
     session["google_state"] = state
     cv = getattr(flow, 'code_verifier', None)
     if cv is None:
