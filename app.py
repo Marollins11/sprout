@@ -382,6 +382,7 @@ def _google_flow(redirect_uri, scopes=None):
     from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
     from google_auth_oauthlib.flow import Flow
     os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+    os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
     return Flow.from_client_config(
         {'web': {
             'client_id': GOOGLE_CLIENT_ID,
