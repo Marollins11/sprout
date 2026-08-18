@@ -1084,6 +1084,13 @@ def google_auth_start():
     flow = _google_flow(redirect_uri, scopes=CALENDAR_GOOGLE_SCOPES)
     auth_url, state = flow.authorization_url(access_type="offline", include_granted_scopes="true")
     session["google_state"] = state
+    cv = getattr(flow, 'code_verifier', None)
+    if cv is None:
+        try:
+            cv = flow.oauth2session.code_challenge
+        except Exception:
+            pass
+    session["google_cal_cv"] = cv
     return redirect(auth_url)
 
 
@@ -1093,7 +1100,8 @@ def google_auth_callback():
     redirect_uri = _https_base() + "/api/calendar/auth/google/callback"
     flow = _google_flow(redirect_uri, scopes=CALENDAR_GOOGLE_SCOPES)
     flow.state = session.get("google_state")
-    flow.fetch_token(authorization_response=_https_response_url())
+    flow.fetch_token(authorization_response=_https_response_url(),
+                      code_verifier=session.get("google_cal_cv"))
     creds = flow.credentials
     r = req.get(f"https://www.googleapis.com/oauth2/v1/userinfo?access_token={creds.token}")
     email = r.json().get("email", "Google Account")
