@@ -397,7 +397,23 @@ def debug_user_lookup():
             "FROM tasks WHERE user_id=?", (uid,)
         ).fetchone())
         projects = db.execute("SELECT COUNT(*) as n FROM projects WHERE user_id=?", (uid,)).fetchone()['n']
-        out.append({**u, "task_counts": counts, "project_count": projects})
+        sub_counts = """
+            (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id) as subtask_total,
+            (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND (s.status='done' OR (s.status IS NULL AND s.completed=1))) as subtask_done
+        """
+        exact_query_str_uid = db.execute(
+            f"SELECT COUNT(*) as n FROM tasks t WHERE (t.archived IS NULL OR t.archived=0) AND t.user_id=?", (str(uid),)
+        ).fetchone()['n']
+        exact_query_int_uid = db.execute(
+            f"SELECT COUNT(*) as n FROM tasks t WHERE (t.archived IS NULL OR t.archived=0) AND t.user_id=?", (uid,)
+        ).fetchone()['n']
+        sample = [dict(r) for r in db.execute(
+            "SELECT id, title, status, archived, user_id, typeof(user_id) as user_id_type FROM tasks WHERE user_id=? LIMIT 3", (uid,)
+        ).fetchall()]
+        out.append({**u, "task_counts": counts, "project_count": projects,
+                     "exact_query_with_str_uid": exact_query_str_uid,
+                     "exact_query_with_int_uid": exact_query_int_uid,
+                     "sample_rows": sample})
     return jsonify({"ok": True, "matches": out})
 
 @app.before_request
