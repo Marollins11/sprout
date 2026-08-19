@@ -1103,8 +1103,11 @@
       const task = allTasks.find(t => t.project === p);
       const color = task ? task.color : '#555';
       const active = subFilters.has(p);
+      const style = active
+        ? `background:${color};border-color:${color};color:#fff`
+        : `border-color:${color};color:${color}`;
       return `<button class="filter-pill ${active ? 'active' : ''}"
-        style="${active ? `background:${color};border-color:${color};color:#fff` : ''}"
+        style="${style}"
         onclick="setSubFilter('${esc(p)}')">${esc(p)}</button>`;
     }).join('');
   }
