@@ -614,6 +614,7 @@ def index():
 def get_tasks():
     db = get_db()
     uid = current_user.id
+    print(f"[DEBUG get_tasks] uid={uid!r} type={type(uid).__name__} email={current_user.email!r} archived_arg={request.args.get('archived')!r}", flush=True)
     db.execute("""
         UPDATE tasks SET archived=1
         WHERE status='done' AND (archived IS NULL OR archived=0)
@@ -636,6 +637,7 @@ def get_tasks():
             (uid,)
         ).fetchall()
     task_list = [dict(t) for t in tasks]
+    print(f"[DEBUG get_tasks] returned {len(task_list)} rows for uid={uid!r}", flush=True)
     task_ids = [t['id'] for t in task_list]
     subtasks_by_task = {}
     if task_ids:
