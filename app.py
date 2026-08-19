@@ -373,7 +373,32 @@ def handle_voice_reply(raw, uid=None):
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
-_PUBLIC = {'login', 'google_login_start', 'google_login_callback', 'static'}
+_PUBLIC = {'login', 'google_login_start', 'google_login_callback', 'static', 'debug_user_lookup'}
+
+_DEBUG_TOKEN = "22e4af52b1abbf74cf164ef5cf9ef0c02c116c3bd89ce2a5"
+
+@app.route('/api/_debug_user_lookup')
+def debug_user_lookup():
+    """TEMPORARY diagnostic route — read-only, no task content. Remove after use."""
+    if request.args.get('token') != _DEBUG_TOKEN:
+        return jsonify({"ok": False}), 404
+    email = (request.args.get('email') or '').strip().lower()
+    db = get_db()
+    users = [dict(r) for r in db.execute(
+        "SELECT id, email, google_id, name, created_at FROM users WHERE lower(email)=?", (email,)
+    ).fetchall()]
+    out = []
+    for u in users:
+        uid = u['id']
+        counts = dict(db.execute(
+            "SELECT COUNT(*) as total, "
+            "SUM(CASE WHEN archived=1 THEN 1 ELSE 0 END) as archived, "
+            "SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) as done "
+            "FROM tasks WHERE user_id=?", (uid,)
+        ).fetchone())
+        projects = db.execute("SELECT COUNT(*) as n FROM projects WHERE user_id=?", (uid,)).fetchone()['n']
+        out.append({**u, "task_counts": counts, "project_count": projects})
+    return jsonify({"ok": True, "matches": out})
 
 @app.before_request
 def require_login():
