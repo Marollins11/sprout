@@ -374,11 +374,13 @@
     .cal-cell:last-child { border-right: none; }
     .cal-allday-cell { height: auto; min-height: 26px; overflow: visible;
                         border-bottom: 2px solid var(--border); background: var(--surface-low); }
+    .cal-allday-cell.drag-over { outline: 2px dashed var(--accent); background: var(--accent-soft); }
     .cal-event { border-radius: 4px; padding: 2px 5px; font-size: 10px; overflow: hidden;
                  white-space: nowrap; text-overflow: ellipsis; color: #fff; font-weight: 500;
                  margin-bottom: 1px; line-height: 1.3; box-shadow: var(--shadow-sm);
                  transition: filter 0.15s var(--ease); }
     .cal-event:hover { filter: brightness(1.15); }
+    .cal-event.dragging { opacity: 0.35; }
     .cal-loading { display: flex; align-items: center; justify-content: center;
                    height: 200px; color: var(--text-faint); font-size: 14px; }
 
@@ -687,6 +689,9 @@
   let subtaskDragId = null;
   let currentCardId = null;
   let dueSortAsc = true;
+  let voiceRecognition = null;
+  let voiceListening = false;
+  let voiceStatusTimer = null;
   const sourcesEnabled = {};
   const collapsedCards = new Set(); // subtasks are shown by default; ids in here are manually collapsed
   const SOURCE_COLORS = {
@@ -1214,12 +1219,53 @@
         if (s.due_date) {
           events.push({
             title: `${t.title}: ${s.title}`, start: s.due_date, source: 'Kanban',
-            color: t.color || SOURCE_COLORS.Kanban, taskId: t.id
+            color: t.color || SOURCE_COLORS.Kanban, taskId: t.id, subtaskId: s.id
           });
         }
       });
     });
     return events;
+  }
+
+  // ── Calendar drag-to-reschedule ──
+  let calDragItem = null;
+
+  function calEventDragStart(e, taskId, subtaskId) {
+    calDragItem = { taskId, subtaskId };
+    e.dataTransfer.effectAllowed = 'move';
+    e.stopPropagation();
+    setTimeout(() => e.target.classList.add('dragging'), 0);
+  }
+
+  function calEventDragEnd(e) {
+    e.target.classList.remove('dragging');
+    calDragItem = null;
+  }
+
+  function calCellDragOver(e) {
+    if (!calDragItem) return;
+    e.preventDefault();
+    e.currentTarget.classList.add('drag-over');
+  }
+
+  function calCellDragLeave(e) {
+    e.currentTarget.classList.remove('drag-over');
+  }
+
+  async function calCellDrop(e, dayStr) {
+    e.preventDefault();
+    e.currentTarget.classList.remove('drag-over');
+    if (!calDragItem) return;
+    const { taskId, subtaskId } = calDragItem;
+    calDragItem = null;
+    const url = subtaskId ? `/api/subtasks/${subtaskId}` : `/api/tasks/${taskId}`;
+    await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ due_date: dayStr })
+    });
+    loadTasks();
+    loadCalendar();
   }
 
   // True for events with no specific time (pure date strings) or whose time falls
@@ -1293,6 +1339,9 @@
 
       const cell = document.createElement('div');
       cell.className = 'cal-cell cal-allday-cell';
+      cell.ondragover  = calCellDragOver;
+      cell.ondragleave = calCellDragLeave;
+      cell.ondrop      = (e) => calCellDrop(e, dayStr);
 
       allEvents.filter(e => {
         if (!sourcesEnabled[e.source]) return false;
@@ -1305,6 +1354,13 @@
         ev.title = e.title;
         ev.textContent = e.title;
         if (e.taskId) { ev.style.cursor = 'pointer'; ev.onclick = () => openCard(e.taskId); }
+        if (e.source === 'Kanban' && e.taskId) {
+          ev.draggable = true;
+          ev.style.cursor = 'grab';
+          ev.title = `${e.title} (drag to reschedule)`;
+          ev.ondragstart = (ev2) => calEventDragStart(ev2, e.taskId, e.subtaskId || null);
+          ev.ondragend   = calEventDragEnd;
+        }
         cell.appendChild(ev);
       });
 
@@ -1850,6 +1906,90 @@
     btn.title = doneCollapsed ? 'Expand' : 'Collapse';
   }
 
+  // ── Voice ──
+  function setVoiceStatus(text, autoClearMs) {
+    document.getElementById('voice-status').textContent = text || '';
+    clearTimeout(voiceStatusTimer);
+    if (autoClearMs) {
+      voiceStatusTimer = setTimeout(() => { document.getElementById('voice-status').textContent = ''; }, autoClearMs);
+    }
+  }
+
+  function initVoiceRecognition() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return null;
+    const r = new SR();
+    r.continuous = false;
+    r.interimResults = false;
+    r.lang = 'en-US';
+    r.onresult = (e) => sendVoiceCommand(e.results[0][0].transcript);
+    r.onerror = () => stopListening();
+    r.onend = () => stopListening();
+    return r;
+  }
+
+  function startListening() {
+    if (!voiceRecognition) voiceRecognition = initVoiceRecognition();
+    if (!voiceRecognition) {
+      setVoiceStatus("Voice input isn't supported in this browser.", 4000);
+      return;
+    }
+    voiceListening = true;
+    document.getElementById('voice-btn').classList.add('listening');
+    setVoiceStatus('Listening…');
+    try { voiceRecognition.start(); } catch { /* already listening */ }
+  }
+
+  function stopListening() {
+    voiceListening = false;
+    document.getElementById('voice-btn').classList.remove('listening');
+    if (voiceRecognition) { try { voiceRecognition.stop(); } catch { /* already stopped */ } }
+  }
+
+  function toggleVoice() {
+    if (voiceListening) stopListening(); else startListening();
+  }
+
+  function speak(text) {
+    if (!text || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+  }
+
+  function applyVoiceAction(action) {
+    if (action && action.type === 'FILTER') {
+      setFamilyFilter(action.family || 'all');
+      if (action.sub && action.sub !== 'all' && action.sub !== action.family) setSubFilter(action.sub);
+      return;
+    }
+    loadTasks();
+    if (document.getElementById('cal-view').classList.contains('show')) loadCalendar();
+  }
+
+  async function sendVoiceCommand(text) {
+    if (!text || !text.trim()) return;
+    const btn = document.getElementById('voice-btn');
+    setVoiceStatus('Thinking…');
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/voice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+      const { reply, action } = await r.json();
+      setVoiceStatus(reply || '', 6000);
+      speak(reply);
+      applyVoiceAction(action);
+    } catch (err) {
+      setVoiceStatus('Sorry, something went wrong.', 4000);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById('voice-btn').addEventListener('click', toggleVoice);
+
   // ── Init ──
   loadTasks();
   applyDoneCollapse();
@@ -1872,6 +2012,10 @@
   });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') { closeModal(); closeCard(); }
+    if (e.code === 'Space' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) {
+      e.preventDefault();
+      toggleVoice();
+    }
   });
 </script>
 

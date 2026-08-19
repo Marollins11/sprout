@@ -40,25 +40,35 @@ def get_genai_client():
     return _genai_client
 
 FAMILY_PALETTES = {
-    "work":     ["1F6FEB", "1565C0", "0D47A1", "3B82F6", "60A5FA", "93C5FD", "BFDBFE"],
-    "school":   ["1A7F37", "166534", "14532D", "22C55E", "4ADE80", "86EFAC", "BBF7D0"],
-    "personal": ["6B21A8", "7E22CE", "9333EA", "A855F7", "C084FC", "DDD6FE"],
+    "work":     ["1F6FEB", "D54C15", "0C8B5E", "A46F00", "E8226D", "1A7F37", "6B21A8", "E13A39"],
+    "school":   ["1A7F37", "6B21A8", "E13A39", "1F6FEB", "D54C15", "0C8B5E", "A46F00", "E8226D"],
+    "personal": ["6B21A8", "E13A39", "1F6FEB", "D54C15", "0C8B5E", "A46F00", "E8226D", "1A7F37"],
 }
 AUTO_PALETTE = ["C25100", "0E7490", "B45309", "BE185D", "065F46", "1D4ED8"]
 auto_idx = 0
 
-VOICE_SYSTEM = """You are Sprout, a voice-first personal assistant.
-Respond with EXACTLY ONE structured reply or a plain conversational answer.
-TASK:           TASK|title|family|sub-project
+VOICE_SYSTEM = """You are Sprout, a voice-first personal assistant that controls a kanban task board.
+The user will speak naturally — never ask them to rephrase in a command syntax. Map what they say
+to EXACTLY ONE of the structured replies below, or reply conversationally in 2-3 sentences if none fit.
+
+ADD TASK:       TASK|title|family|sub-project
 MOVE STATUS:    MOVE_STATUS|partial title|new_status  (todo/in_progress/done)
-REASSIGN:       MOVE_PROJECT|partial title|family|new sub-project
+CATEGORIZE:     MOVE_PROJECT|partial title|family|new sub-project  (always start the reply with the literal word MOVE_PROJECT, never CATEGORIZE)
 FLAG/UNFLAG:    FLAG|partial title|1 or 0
-FILTER BOARD:   FILTER|family|sub-project  (use "all" to clear)
+FILTER BOARD:   FILTER|family|sub-project  (use "all" for either slot to clear that part of the filter)
 SET REMINDER:   REMINDER|HH:MM|task description
 CANVAS SYNC:    CANVAS_SYNC
-For anything else reply conversationally in 2-3 sentences.
-Infer the family from context: work=professional, school=courses, personal=everything else.
-Keep replies short — they are spoken aloud."""
+
+TASK notes:
+- "sub-project" is the category/tag the user names — e.g. "add a task to call the plumber for
+  the home category" -> TASK|call the plumber|personal|home. "add a task for client alpha to
+  send the invoice" -> TASK|send the invoice|work|client alpha.
+- Strip the category phrase ("for ___ category", "under ___", "in ___") out of the title itself.
+- If no category/sub-project is said, default sub-project to the family name.
+- Infer family from context when not said explicitly: work=professional/clients/meetings,
+  school=courses/homework/assignments, personal=everything else.
+
+Keep replies short (they are spoken aloud) and confirm what you did, e.g. "Added it to client alpha."."""
 
 _chat_sessions = {}
 
@@ -233,6 +243,29 @@ def get_or_create_project(name, family, db=None, uid=None):
     return "#" + color
 
 
+def _migrate_family_colors(db):
+    """Re-assign each work/school/personal project a distinct hue from
+    FAMILY_PALETTES, keyed by creation order, and propagate it to the
+    denormalized tasks.color column. Idempotent — safe to run every startup."""
+    for fam, pal in FAMILY_PALETTES.items():
+        rows = db.execute(
+            "SELECT id, user_id, name FROM projects WHERE family=? ORDER BY user_id, id",
+            (fam,)
+        ).fetchall()
+        by_user = {}
+        for r in rows:
+            by_user.setdefault(r["user_id"], []).append(r)
+        for uid, projs in by_user.items():
+            for i, p in enumerate(projs):
+                color = "#" + pal[i % len(pal)]
+                db.execute("UPDATE projects SET color=? WHERE id=?", (color, p["id"]))
+                db.execute(
+                    "UPDATE tasks SET color=? WHERE user_id=? AND family=? AND project=?",
+                    (color, uid, fam, p["name"])
+                )
+    db.commit()
+
+
 def _next_recurrence_date(due_date, recurrence, interval=1):
     """Compute the next due date for a recurring task, based off its prior due date."""
     interval = max(1, int(interval or 1))
@@ -254,7 +287,7 @@ def _next_recurrence_date(due_date, recurrence, interval=1):
 
 # ── Voice command handler ────────────────────────────────────────────────────
 
-def handle_voice_reply(raw, host_url, uid=None):
+def handle_voice_reply(raw, uid=None):
     """Execute a Gemini structured reply against the DB. Returns (spoken_text, action)."""
     action = {}
     db = get_db()
@@ -283,7 +316,8 @@ def handle_voice_reply(raw, host_url, uid=None):
         db.commit()
         return f"Moved to {status.replace('_', ' ')}.", action
 
-    if raw.startswith("MOVE_PROJECT|"):
+    if raw.startswith("MOVE_PROJECT|") or raw.startswith("CATEGORIZE|") or raw.startswith("REASSIGN|"):
+        raw = "MOVE_PROJECT|" + raw.split("|", 1)[1]
         _, match, family, project = raw.split("|", 3)
         task = db.execute(
             "SELECT id FROM tasks WHERE instr(lower(title), ?) > 0 AND user_id=?", (match.lower(), uid)
@@ -312,7 +346,13 @@ def handle_voice_reply(raw, host_url, uid=None):
     if raw.startswith("FILTER|"):
         _, family, sub = raw.split("|", 2)
         action = {"type": "FILTER", "family": family, "sub": sub}
-        return "Showing all tasks." if family == "all" else f"Filtering to {sub}.", action
+        if family == "all" and sub == "all":
+            msg = "Showing all tasks."
+        elif sub and sub != "all":
+            msg = f"Filtering to {sub}."
+        else:
+            msg = f"Filtering to {family}."
+        return msg, action
 
     if raw.startswith("REMINDER|"):
         _, t, task_desc = raw.split("|", 2)
@@ -321,10 +361,12 @@ def handle_voice_reply(raw, host_url, uid=None):
         return f"Reminder set for {t}.", action
 
     if raw.strip() == "CANVAS_SYNC":
-        from canvas_sync import sync_to_kanban
-        base = host_url.rstrip("/")
-        threading.Thread(target=lambda: sync_to_kanban(base), daemon=True).start()
-        return "Syncing Canvas now.", action
+        result = _sync_canvas_ical(uid)
+        if not result["ok"]:
+            if result["error"] == "No Canvas feed configured":
+                return "You haven't connected a Canvas feed yet — add one in the Accounts tab first.", action
+            return "Canvas sync failed. Please try again.", action
+        return f"Synced Canvas — added {result['added']} new assignment{'s' if result['added'] != 1 else ''}.", action
 
     return raw, action
 
@@ -1027,19 +1069,19 @@ def delete_course_mapping(code):
     return jsonify({"ok": True})
 
 
-@app.route("/api/canvas/ical/sync", methods=["POST"])
-def sync_canvas_ical_now():
+def _sync_canvas_ical(uid):
+    """Pull the user's Canvas iCal feed into the kanban board. Returns a result dict
+    with either {"ok": True, "added": ..., ...} or {"ok": False, "error": ...}."""
     try:
         from ical_sync import fetch_ical_events
         db = get_db()
         row = db.execute(
-            "SELECT url FROM canvas_feeds WHERE user_id=?", (current_user.id,)
+            "SELECT url FROM canvas_feeds WHERE user_id=?", (uid,)
         ).fetchone()
         if not row:
-            return jsonify({"ok": False, "error": "No Canvas feed configured"}), 400
+            return {"ok": False, "error": "No Canvas feed configured"}
         mappings = _get_user_mappings(db)
         events = fetch_ical_events(row["url"], mappings=mappings)
-        uid = current_user.id
         kanban_disabled = _get_kanban_disabled_codes(db)
         existing = {t["title"] for t in db.execute(
             "SELECT title FROM tasks WHERE user_id=?", (uid,)
@@ -1070,14 +1112,20 @@ def sync_canvas_ical_now():
             existing.add(title)
             added += 1
         db.commit()
-        return jsonify({"ok": True, "added": added,
-                        "total": len(events),
-                        "skipped_session": skipped_session,
-                        "skipped_dupe": skipped_dupe,
-                        "skipped_hidden": skipped_hidden})
+        return {"ok": True, "added": added,
+                "total": len(events),
+                "skipped_session": skipped_session,
+                "skipped_dupe": skipped_dupe,
+                "skipped_hidden": skipped_hidden}
     except Exception as e:
         print(f"[sync error] {traceback.format_exc()}", flush=True)
-        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+@app.route("/api/canvas/ical/sync", methods=["POST"])
+def sync_canvas_ical_now():
+    result = _sync_canvas_ical(current_user.id)
+    return jsonify(result), (200 if result["ok"] else (400 if result["error"] == "No Canvas feed configured" else 500))
 
 
 # ── Voice ─────────────────────────────────────────────────────────────────────
@@ -1097,7 +1145,7 @@ def voice_command():
 
         chat = get_chat(sid)
         response = chat.send_message(text)
-        reply, action = handle_voice_reply(response.text.strip(), request.host_url, uid=current_user.id)
+        reply, action = handle_voice_reply(response.text.strip(), uid=current_user.id)
         return jsonify({"reply": reply, "action": action})
     except Exception as e:
         print(f"[voice error] {traceback.format_exc()}", flush=True)
@@ -1274,6 +1322,7 @@ def due_date_alert_loop():
 
 
 init_db()
+_migrate_family_colors(get_db())
 threading.Thread(target=canvas_auto_loop, daemon=True).start()
 threading.Thread(target=due_date_alert_loop, daemon=True).start()
 
