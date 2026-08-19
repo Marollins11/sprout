@@ -690,9 +690,6 @@
   let subtaskDragId = null;
   let currentCardId = null;
   let dueSortAsc = true;
-  let voiceRecognition = null;
-  let voiceListening = false;
-  let voiceStatusTimer = null;
   const sourcesEnabled = {};
   const collapsedCards = new Set(); // subtasks are shown by default; ids in here are manually collapsed
   const SOURCE_COLORS = {
@@ -1908,90 +1905,6 @@
     btn.title = doneCollapsed ? 'Expand' : 'Collapse';
   }
 
-  // ── Voice ──
-  function setVoiceStatus(text, autoClearMs) {
-    document.getElementById('voice-status').textContent = text || '';
-    clearTimeout(voiceStatusTimer);
-    if (autoClearMs) {
-      voiceStatusTimer = setTimeout(() => { document.getElementById('voice-status').textContent = ''; }, autoClearMs);
-    }
-  }
-
-  function initVoiceRecognition() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return null;
-    const r = new SR();
-    r.continuous = false;
-    r.interimResults = false;
-    r.lang = 'en-US';
-    r.onresult = (e) => sendVoiceCommand(e.results[0][0].transcript);
-    r.onerror = () => stopListening();
-    r.onend = () => stopListening();
-    return r;
-  }
-
-  function startListening() {
-    if (!voiceRecognition) voiceRecognition = initVoiceRecognition();
-    if (!voiceRecognition) {
-      setVoiceStatus("Voice input isn't supported in this browser.", 4000);
-      return;
-    }
-    voiceListening = true;
-    document.getElementById('voice-btn').classList.add('listening');
-    setVoiceStatus('Listening…');
-    try { voiceRecognition.start(); } catch { /* already listening */ }
-  }
-
-  function stopListening() {
-    voiceListening = false;
-    document.getElementById('voice-btn').classList.remove('listening');
-    if (voiceRecognition) { try { voiceRecognition.stop(); } catch { /* already stopped */ } }
-  }
-
-  function toggleVoice() {
-    if (voiceListening) stopListening(); else startListening();
-  }
-
-  function speak(text) {
-    if (!text || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
-  }
-
-  function applyVoiceAction(action) {
-    if (action && action.type === 'FILTER') {
-      setFamilyFilter(action.family || 'all');
-      if (action.sub && action.sub !== 'all' && action.sub !== action.family) setSubFilter(action.sub);
-      return;
-    }
-    loadTasks();
-    if (document.getElementById('cal-view').classList.contains('show')) loadCalendar();
-  }
-
-  async function sendVoiceCommand(text) {
-    if (!text || !text.trim()) return;
-    const btn = document.getElementById('voice-btn');
-    setVoiceStatus('Thinking…');
-    btn.disabled = true;
-    try {
-      const r = await fetch('/api/voice', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
-      });
-      const { reply, action } = await r.json();
-      setVoiceStatus(reply || '', 6000);
-      speak(reply);
-      applyVoiceAction(action);
-    } catch (err) {
-      setVoiceStatus('Sorry, something went wrong.', 4000);
-    } finally {
-      btn.disabled = false;
-    }
-  }
-
-  document.getElementById('voice-btn').addEventListener('click', toggleVoice);
-
   // ── Init ──
   loadTasks();
   applyDoneCollapse();
@@ -2014,10 +1927,6 @@
   });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') { closeModal(); closeCard(); }
-    if (e.code === 'Space' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) {
-      e.preventDefault();
-      toggleVoice();
-    }
   });
 </script>
 

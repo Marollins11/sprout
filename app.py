@@ -373,54 +373,7 @@ def handle_voice_reply(raw, uid=None):
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
-_PUBLIC = {'login', 'google_login_start', 'google_login_callback', 'static', 'debug_user_lookup'}
-
-
-@app.route('/api/_debug_whoami')
-def debug_whoami():
-    """TEMPORARY diagnostic route — shows the caller's own identity only. Remove after use."""
-    return jsonify({"id": current_user.id, "email": current_user.email, "name": current_user.name})
-
-_DEBUG_TOKEN = "22e4af52b1abbf74cf164ef5cf9ef0c02c116c3bd89ce2a5"
-
-@app.route('/api/_debug_user_lookup')
-def debug_user_lookup():
-    """TEMPORARY diagnostic route — read-only, no task content. Remove after use."""
-    if request.args.get('token') != _DEBUG_TOKEN:
-        return jsonify({"ok": False}), 404
-    email = (request.args.get('email') or '').strip().lower()
-    db = get_db()
-    users = [dict(r) for r in db.execute(
-        "SELECT id, email, google_id, name, created_at FROM users WHERE lower(email)=?", (email,)
-    ).fetchall()]
-    out = []
-    for u in users:
-        uid = u['id']
-        counts = dict(db.execute(
-            "SELECT COUNT(*) as total, "
-            "SUM(CASE WHEN archived=1 THEN 1 ELSE 0 END) as archived, "
-            "SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) as done "
-            "FROM tasks WHERE user_id=?", (uid,)
-        ).fetchone())
-        projects = db.execute("SELECT COUNT(*) as n FROM projects WHERE user_id=?", (uid,)).fetchone()['n']
-        sub_counts = """
-            (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id) as subtask_total,
-            (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND (s.status='done' OR (s.status IS NULL AND s.completed=1))) as subtask_done
-        """
-        exact_query_str_uid = db.execute(
-            f"SELECT COUNT(*) as n FROM tasks t WHERE (t.archived IS NULL OR t.archived=0) AND t.user_id=?", (str(uid),)
-        ).fetchone()['n']
-        exact_query_int_uid = db.execute(
-            f"SELECT COUNT(*) as n FROM tasks t WHERE (t.archived IS NULL OR t.archived=0) AND t.user_id=?", (uid,)
-        ).fetchone()['n']
-        sample = [dict(r) for r in db.execute(
-            "SELECT id, title, status, archived, user_id, typeof(user_id) as user_id_type FROM tasks WHERE user_id=? LIMIT 3", (uid,)
-        ).fetchall()]
-        out.append({**u, "task_counts": counts, "project_count": projects,
-                     "exact_query_with_str_uid": exact_query_str_uid,
-                     "exact_query_with_int_uid": exact_query_int_uid,
-                     "sample_rows": sample})
-    return jsonify({"ok": True, "matches": out})
+_PUBLIC = {'login', 'google_login_start', 'google_login_callback', 'static'}
 
 @app.before_request
 def require_login():
@@ -614,7 +567,6 @@ def index():
 def get_tasks():
     db = get_db()
     uid = current_user.id
-    print(f"[DEBUG get_tasks] uid={uid!r} type={type(uid).__name__} email={current_user.email!r} archived_arg={request.args.get('archived')!r}", flush=True)
     db.execute("""
         UPDATE tasks SET archived=1
         WHERE status='done' AND (archived IS NULL OR archived=0)
@@ -637,7 +589,6 @@ def get_tasks():
             (uid,)
         ).fetchall()
     task_list = [dict(t) for t in tasks]
-    print(f"[DEBUG get_tasks] returned {len(task_list)} rows for uid={uid!r}", flush=True)
     task_ids = [t['id'] for t in task_list]
     subtasks_by_task = {}
     if task_ids:
