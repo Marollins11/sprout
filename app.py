@@ -375,6 +375,12 @@ def handle_voice_reply(raw, uid=None):
 
 _PUBLIC = {'login', 'google_login_start', 'google_login_callback', 'static', 'debug_user_lookup'}
 
+
+@app.route('/api/_debug_whoami')
+def debug_whoami():
+    """TEMPORARY diagnostic route — shows the caller's own identity only. Remove after use."""
+    return jsonify({"id": current_user.id, "email": current_user.email, "name": current_user.name})
+
 _DEBUG_TOKEN = "22e4af52b1abbf74cf164ef5cf9ef0c02c116c3bd89ce2a5"
 
 @app.route('/api/_debug_user_lookup')
