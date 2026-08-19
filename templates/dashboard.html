@@ -135,12 +135,13 @@
     .card.flagged { border-left: 3px solid #f59e0b; }
     .card.due-tomorrow { border-right: 3px solid #f59e0b; }
     .card.due-today { border-right: 3px solid #dc2626; }
-    .card-title { font-size: 13px; line-height: 1.45; margin-bottom: 9px; color: var(--text); font-weight: 500; }
+    .card-title { font-size: 13px; line-height: 1.45; margin-bottom: 3px; color: var(--text); font-weight: 500; }
+    .card-category { font-size: 11px; font-weight: 600; margin-bottom: 8px; letter-spacing: 0.01em; }
     .card-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .card-badge { font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 10px; color: #fff;
                   max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
                   flex-shrink: 0; }
-    .card-actions { display: flex; gap: 2px; flex-shrink: 0; }
+    .card-actions { display: flex; gap: 2px; flex-shrink: 0; margin-left: auto; }
     .card-btn { background: none; border: none; cursor: pointer; font-size: 13px;
                 padding: 2px 5px; border-radius: 4px; opacity: 0.35; transition: opacity 0.15s var(--ease); }
     .card-btn:hover { opacity: 1; background: var(--border); }
@@ -814,14 +815,15 @@
     const collapsed  = collapsedCards.has(t.id);
     return `<div class="card ${t.flagged ? 'flagged' : ''} ${cardDueCls ? 'due-' + cardDueCls : ''}"
       data-id="${t.id}"
+      style="background-color:${esc(t.color)}0F"
       draggable="true"
       ondragstart="cardDragStart(event,${t.id})"
       ondragend="cardDragEnd(event)"
       onclick="openCard(${t.id})">
       <div class="card-title">${esc(t.title)}</div>
+      <div class="card-category" style="color:${esc(t.color)}">${esc(t.project)}</div>
       ${t.description ? `<div class="card-desc">${esc(t.description)}</div>` : ''}
       <div class="card-meta">
-        <span class="card-badge" style="background:${esc(t.color)}">${esc(t.project)}</span>
         ${t.priority ? `<span class="priority-badge priority-${t.priority}">${t.priority}</span>` : ''}
         ${dueStr ? `<span class="card-due ${ownDueCls ? 'due-' + ownDueCls : ''}">${dueStr}</span>` : ''}
         ${hasSubs ? `<span class="subtask-count" onclick="event.stopPropagation();toggleCardExpand(${t.id})" title="Toggle subtasks">
@@ -1856,11 +1858,11 @@
   function renderArchiveCol() {
     document.getElementById('count-archived').textContent = archivedTasks.length;
     document.getElementById('col-archived').innerHTML = archivedTasks.map(t => `
-      <div class="card">
+      <div class="card" style="background-color:${esc(t.color)}0F">
         <div class="card-title">${esc(t.title)}</div>
+        <div class="card-category" style="color:${esc(t.color)}">${esc(t.project)}</div>
         ${t.description ? `<div class="card-desc">${esc(t.description)}</div>` : ''}
         <div class="card-meta">
-          <span class="card-badge" style="background:${esc(t.color)}">${esc(t.project)}</span>
           <div class="card-actions" onclick="event.stopPropagation()">
             <button class="card-btn" title="Restore to Done" onclick="restoreCard(${t.id})">&#x21A9;</button>
             <button class="card-btn" title="Delete" onclick="deleteCard(${t.id})">&#x1F5D1;</button>
