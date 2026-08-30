@@ -1297,12 +1297,16 @@ def icloud_auth():
 
 def canvas_auto_loop():
     def job():
-        try:
-            from canvas_sync import sync_to_kanban
-            sync_to_kanban("http://localhost:5001")
-        except Exception as e:
-            print(f"Canvas API sync error: {e}")
-    sched.every(15).minutes.do(job)
+        db = get_db()
+        user_ids = [r["user_id"] for r in db.execute("SELECT user_id FROM canvas_feeds").fetchall()]
+        for uid in user_ids:
+            try:
+                result = _sync_canvas_ical(uid)
+                if not result["ok"]:
+                    print(f"Canvas auto-sync error (user {uid}): {result['error']}")
+            except Exception as e:
+                print(f"Canvas auto-sync error (user {uid}): {e}")
+    sched.every().day.at("06:00").do(job)
     while True:
         sched.run_pending()
         _time.sleep(30)
