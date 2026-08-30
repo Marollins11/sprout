@@ -173,6 +173,14 @@ def init_db():
         url TEXT NOT NULL,
         created_at TEXT
     )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS canvas_synced_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        uid TEXT NOT NULL,
+        title TEXT,
+        created_at TEXT,
+        UNIQUE(user_id, uid)
+    )""")
     db.execute("""CREATE TABLE IF NOT EXISTS course_mappings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
@@ -1083,8 +1091,15 @@ def _sync_canvas_ical(uid):
         mappings = _get_user_mappings(db)
         events = fetch_ical_events(row["url"], mappings=mappings)
         kanban_disabled = _get_kanban_disabled_codes(db)
-        existing = {t["title"] for t in db.execute(
+        # existing_titles catches tasks still on the board (done, moved, recategorized —
+        # all still dedupe correctly since the row and its title persist). synced_uids is a
+        # permanent ledger keyed to Canvas's own event UID, so a task the user DELETED isn't
+        # re-added just because its title no longer appears in the tasks table.
+        existing_titles = {t["title"] for t in db.execute(
             "SELECT title FROM tasks WHERE user_id=?", (uid,)
+        ).fetchall()}
+        synced_uids = {r["uid"] for r in db.execute(
+            "SELECT uid FROM canvas_synced_items WHERE user_id=?", (uid,)
         ).fetchall()}
         SKIP_PATTERNS = ("class session", "class meeting", "lecture", "office hours")
         added = 0
@@ -1093,14 +1108,21 @@ def _sync_canvas_ical(uid):
         skipped_hidden = 0
         for e in events:
             title = e["title"]
+            ical_uid = e.get("uid")
             if e.get("code") in kanban_disabled:
                 skipped_hidden += 1
                 continue
             if any(title.lower().startswith(p) for p in SKIP_PATTERNS):
                 skipped_session += 1
                 continue
-            if title in existing:
+            if (ical_uid and ical_uid in synced_uids) or title in existing_titles:
                 skipped_dupe += 1
+                if ical_uid and ical_uid not in synced_uids:
+                    db.execute(
+                        "INSERT OR IGNORE INTO canvas_synced_items (user_id,uid,title,created_at) VALUES (?,?,?,?)",
+                        (uid, ical_uid, title, datetime.now().isoformat())
+                    )
+                    synced_uids.add(ical_uid)
                 continue
             color = get_or_create_project(e["course"], "school", db=db, uid=uid)
             db.execute(
@@ -1109,7 +1131,13 @@ def _sync_canvas_ical(uid):
                 (title, "todo", e["course"].lower(), "school", color,
                  datetime.now().isoformat(), e["start"], e.get("description"), uid)
             )
-            existing.add(title)
+            existing_titles.add(title)
+            if ical_uid:
+                db.execute(
+                    "INSERT OR IGNORE INTO canvas_synced_items (user_id,uid,title,created_at) VALUES (?,?,?,?)",
+                    (uid, ical_uid, title, datetime.now().isoformat())
+                )
+                synced_uids.add(ical_uid)
             added += 1
         db.commit()
         return {"ok": True, "added": added,

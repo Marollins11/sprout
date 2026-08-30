@@ -105,6 +105,7 @@ def fetch_ical_events(url, mappings=None, colors=None):
         course = _extract_course(component, mappings=mappings)
         code   = _extract_code(component)
         color  = (colors or {}).get(code) or _course_color(course)
+        uid    = str(component.get("UID", "")).strip()
         events.append({
             "title": summary,
             "start": dt.isoformat(),
@@ -113,6 +114,7 @@ def fetch_ical_events(url, mappings=None, colors=None):
             "course": course,
             "code": code,
             "description": raw_desc or None,
+            "uid": uid or None,
         })
     return events
 
