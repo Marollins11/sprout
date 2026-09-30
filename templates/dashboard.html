@@ -124,6 +124,25 @@
                 gap: 9px; padding-bottom: 8px; }
     .col-body::-webkit-scrollbar { width: 6px; }
     .col-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
+    .kanban-columns { display: flex; gap: 14px; flex: 1; }
+    .col-header-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+    .col-header-label:hover { color: var(--text-muted); }
+    .col-rename-input { flex: 1; background: var(--surface-btn); border: 1px solid var(--accent);
+      border-radius: 4px; font: inherit; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text); padding: 2px 5px; width: 0; min-width: 0; }
+    .col-rename-input:focus { outline: none; }
+    .col-delete-btn { background: none; border: none; cursor: pointer; font-size: 12px;
+      color: var(--text-faint); padding: 1px 5px; border-radius: 4px; line-height: 1; flex-shrink: 0;
+      opacity: 0.5; transition: opacity 0.15s var(--ease), color 0.15s var(--ease); }
+    .col-delete-btn:hover { opacity: 1; color: #dc2626; background: var(--border); }
+    .column-add { flex: 1; min-width: 220px; max-width: 320px; display: flex; flex-direction: column; }
+    .column-add-btn { background: none; border: 1px dashed var(--border); border-radius: var(--radius-md);
+      color: var(--text-faint); font-size: 12px; font-weight: 600; cursor: pointer; padding: 10px;
+      margin-top: 2px; transition: border-color 0.15s var(--ease), color 0.15s var(--ease); }
+    .column-add-btn:hover { border-color: var(--accent); color: var(--text); }
+    .column-add-input { background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius-sm);
+      font-size: 13px; color: var(--text); padding: 8px 10px; margin-top: 2px; }
+    .column-add-input:focus { outline: none; }
 
     /* Cards */
     .card { background: var(--surface); border-radius: var(--radius-md); padding: 11px 13px;
@@ -494,29 +513,7 @@
   </div>
 
   <div class="kanban">
-    <div class="column">
-      <div class="col-header">To Do <span class="col-count" id="count-todo">0</span></div>
-      <div class="col-body" id="col-todo"
-           ondragover="colDragOver(event)" ondragleave="colDragLeave(event)" ondrop="colDrop(event,'todo')"></div>
-    </div>
-    <div class="column">
-      <div class="col-header">In Progress <span class="col-count" id="count-inprog">0</span></div>
-      <div class="col-body" id="col-inprog"
-           ondragover="colDragOver(event)" ondragleave="colDragLeave(event)" ondrop="colDrop(event,'in_progress')"></div>
-    </div>
-    <div class="column">
-      <div class="col-header">Blocked <span class="col-count" id="count-blocked">0</span></div>
-      <div class="col-body" id="col-blocked"
-           ondragover="colDragOver(event)" ondragleave="colDragLeave(event)" ondrop="colDrop(event,'blocked')"></div>
-    </div>
-    <div class="column" id="col-done-wrapper">
-      <div class="col-header" onclick="if(document.getElementById('col-done-wrapper').classList.contains('collapsed'))toggleDoneCollapse()">
-        <span>Done <span class="col-count" id="count-done">0</span></span>
-        <button class="col-collapse-btn" id="done-collapse-btn" onclick="event.stopPropagation();toggleDoneCollapse()" title="Collapse">‹</button>
-      </div>
-      <div class="col-body" id="col-done"
-           ondragover="colDragOver(event)" ondragleave="colDragLeave(event)" ondrop="colDrop(event,'done')"></div>
-    </div>
+    <div class="kanban-columns" id="kanban-columns"></div>
     <div class="col-archive" id="col-archive-wrapper">
       <div class="col-header">Archived <span class="col-count" id="count-archived">0</span></div>
       <div class="col-body" id="col-archived"></div>
@@ -695,8 +692,141 @@
   const SOURCE_COLORS = {
     Google: '#2563EB', Outlook: '#0078D4', iCloud: '#6B21A8', Kanban: '#8B5CF6'
   };
-  const STATUS_CYCLE = { todo: 'in_progress', in_progress: 'done', done: 'todo', blocked: 'in_progress' };
-  const STATUS_LABEL = { todo: 'To Do', in_progress: 'In Progress', done: 'Done', blocked: 'Blocked' };
+  let boardColumns = [];
+
+  function nextColumnKey(key) {
+    const idx = boardColumns.findIndex(c => c.key === key);
+    if (idx === -1 || idx === boardColumns.length - 1) return null;
+    return boardColumns[idx + 1].key;
+  }
+
+  function columnLabel(key) {
+    const c = boardColumns.find(c => c.key === key);
+    return c ? c.label : key;
+  }
+
+  function renderDetailStatusButtons() {
+    document.getElementById('detail-status-btns').innerHTML = boardColumns.map(c =>
+      `<button class="status-btn" data-status="${c.key}" onclick="setDetailStatus('${c.key}')">${esc(c.label)}</button>`
+    ).join('');
+  }
+
+  // ── Columns (swimlanes) ──
+  async function loadColumns() {
+    try {
+      const r = await fetch('/api/columns');
+      boardColumns = await r.json();
+      renderColumnsShell();
+    } catch (e) {
+      console.warn('Could not load columns:', e);
+    }
+  }
+
+  function columnHeaderHTML(c) {
+    if (c.key === 'done') {
+      return `<div class="col-header" onclick="if(document.getElementById('col-done-wrapper').classList.contains('collapsed'))toggleDoneCollapse()">
+        <span>${esc(c.label)} <span class="col-count" id="count-${c.key}">0</span></span>
+        <button class="col-collapse-btn" id="done-collapse-btn" onclick="event.stopPropagation();toggleDoneCollapse()" title="Collapse">‹</button>
+      </div>`;
+    }
+    const rename = c.is_locked ? '' : ` onclick="event.stopPropagation();startRenameColumn(${c.id})"`;
+    const del = c.is_locked ? '' : `<button class="col-delete-btn" title="Delete column"
+        onclick="event.stopPropagation();deleteColumn(${c.id})">&#x2715;</button>`;
+    return `<div class="col-header" id="col-header-${c.id}">
+      <span class="col-header-label"${rename} title="${c.is_locked ? '' : 'Click to rename'}">${esc(c.label)}</span>
+      <span class="col-count" id="count-${c.key}">0</span>
+      ${del}
+    </div>`;
+  }
+
+  function renderColumnsShell() {
+    const mount = document.getElementById('kanban-columns');
+    mount.innerHTML = boardColumns.map(c => `
+      <div class="column" id="${c.key === 'done' ? 'col-done-wrapper' : 'col-wrapper-' + c.id}">
+        ${columnHeaderHTML(c)}
+        <div class="col-body" id="col-${c.key}"
+             ondragover="colDragOver(event)" ondragleave="colDragLeave(event)" ondrop="colDrop(event,'${c.key}')"></div>
+      </div>`).join('') + `
+      <div class="column-add" id="column-add-wrapper">
+        <button class="column-add-btn" id="column-add-btn" onclick="startAddColumn()">+ Column</button>
+      </div>`;
+    applyDoneCollapse();
+  }
+
+  function startAddColumn() {
+    const wrapper = document.getElementById('column-add-wrapper');
+    wrapper.innerHTML = `<input type="text" class="column-add-input" id="column-add-input"
+      placeholder="Column name…" onkeydown="if(event.key==='Enter')submitAddColumn();if(event.key==='Escape')renderColumnsShell()"
+      onblur="submitAddColumn()" />`;
+    const input = document.getElementById('column-add-input');
+    input.focus();
+  }
+
+  async function submitAddColumn() {
+    const input = document.getElementById('column-add-input');
+    if (!input) return;
+    const label = input.value.trim();
+    if (!label) { renderColumnsShell(); return; }
+    input.onblur = null;
+    const r = await fetch('/api/columns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label })
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      alert(d.error || 'Could not add column.');
+    }
+    await loadColumns();
+    renderBoard();
+  }
+
+  function startRenameColumn(cid) {
+    const header = document.getElementById(`col-header-${cid}`);
+    const label = header.querySelector('.col-header-label').textContent;
+    const del = header.querySelector('.col-delete-btn');
+    header.querySelector('.col-header-label').outerHTML =
+      `<input type="text" class="col-rename-input" id="col-rename-input-${cid}" value="${esc(label)}"
+        onkeydown="if(event.key==='Enter')this.blur();if(event.key==='Escape')renderColumnsShell()"
+        onblur="submitRenameColumn(${cid})" onclick="event.stopPropagation()" />`;
+    if (del) del.style.visibility = 'hidden';
+    const input = document.getElementById(`col-rename-input-${cid}`);
+    input.focus();
+    input.select();
+  }
+
+  async function submitRenameColumn(cid) {
+    const input = document.getElementById(`col-rename-input-${cid}`);
+    if (!input) return;
+    const label = input.value.trim();
+    input.onblur = null;
+    if (label) {
+      await fetch(`/api/columns/${cid}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label })
+      });
+    }
+    await loadColumns();
+    renderBoard();
+  }
+
+  async function deleteColumn(cid) {
+    if (!confirm('Delete this column?')) return;
+    const r = await fetch(`/api/columns/${cid}`, { method: 'DELETE' });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      alert(d.error || 'Could not delete column.');
+      return;
+    }
+    await loadColumns();
+    renderBoard();
+  }
+
+  async function initBoard() {
+    await loadColumns();
+    await loadTasks();
+  }
 
   function toggleDueSort() {
     dueSortAsc = !dueSortAsc;
@@ -756,7 +886,8 @@
   }
 
   function renderBoard() {
-    const cols = { todo: [], in_progress: [], blocked: [], done: [] };
+    const cols = {};
+    boardColumns.forEach(c => cols[c.key] = []);
     allTasks.forEach(t => {
       if (familyFilter !== 'all' && t.family !== familyFilter) return;
       if (subFilters.size && !subFilters.has(t.project)) return;
@@ -774,17 +905,13 @@
       return dueSortAsc ? diff : -diff;
     }));
 
-    const map = {
-      todo:        ['col-todo',    'count-todo'],
-      in_progress: ['col-inprog',  'count-inprog'],
-      blocked:     ['col-blocked', 'count-blocked'],
-      done:        ['col-done',    'count-done']
-    };
-    Object.entries(map).forEach(([status, [colId, cntId]]) => {
-      document.getElementById(cntId).textContent = cols[status].length;
-      document.getElementById(colId).innerHTML = cols[status].map(cardHTML).join('');
+    boardColumns.forEach(c => {
+      const cntEl = document.getElementById(`count-${c.key}`);
+      const colEl = document.getElementById(`col-${c.key}`);
+      if (!cntEl || !colEl) return;
+      cntEl.textContent = cols[c.key].length;
+      colEl.innerHTML = cols[c.key].map(cardHTML).join('');
     });
-
   }
 
   // 'today' if the task or any subtask is due today, else 'tomorrow' if due tomorrow, else null.
@@ -801,8 +928,8 @@
   }
 
   function cardHTML(t) {
-    const nextStatus = STATUS_CYCLE[t.status] || 'todo';
-    const nextLabel  = STATUS_LABEL[nextStatus];
+    const nextStatus = nextColumnKey(t.status);
+    const nextLabel  = nextStatus ? columnLabel(nextStatus) : null;
     const dueStr     = formatDue(t.due_date);
     const ownDueCls  = dueBucket(t.due_date);
     const cardDueCls = cardDueBucket(t);
@@ -832,7 +959,9 @@
           <button class="card-btn" title="Delete" onclick="deleteCard(${t.id})">&#x1F5D1;</button>
           ${t.status === 'done'
             ? `<button class="card-btn" title="Archive" onclick="archiveCard(${t.id})">&#x1F4E5;</button>`
-            : `<button class="card-btn" title="Move to ${nextLabel}" onclick="advanceCard(${t.id},'${nextStatus}')">&#8250;</button>`
+            : nextStatus
+              ? `<button class="card-btn" title="Move to ${esc(nextLabel)}" onclick="advanceCard(${t.id},'${nextStatus}')">&#8250;</button>`
+              : ''
           }
         </div>
       </div>
@@ -912,6 +1041,7 @@
     document.getElementById('detail-desc-edit').value = t.description || '';
     descEl.style.display = '';
     document.getElementById('detail-desc-edit').style.display = 'none';
+    renderDetailStatusButtons();
     document.querySelectorAll('#detail-status-btns .status-btn').forEach(b =>
       b.classList.toggle('active', b.dataset.status === t.status));
     document.querySelectorAll('#detail-priority-btns .status-btn').forEach(b =>
@@ -1909,8 +2039,7 @@
   }
 
   // ── Init ──
-  loadTasks();
-  applyDoneCollapse();
+  initBoard();
   setInterval(loadTasks, 10000);
 
   // Auto-switch to Accounts tab after OAuth redirect
@@ -1995,10 +2124,6 @@
     <div class="detail-section">
       <div class="detail-label">Status</div>
       <div class="status-btns" id="detail-status-btns">
-        <button class="status-btn" data-status="todo"        onclick="setDetailStatus('todo')">To Do</button>
-        <button class="status-btn" data-status="in_progress" onclick="setDetailStatus('in_progress')">In Progress</button>
-        <button class="status-btn" data-status="blocked"     onclick="setDetailStatus('blocked')">Blocked</button>
-        <button class="status-btn" data-status="done"        onclick="setDetailStatus('done')">Done</button>
       </div>
     </div>
     <div class="detail-section">

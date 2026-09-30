@@ -3,7 +3,7 @@ from flask import Flask, jsonify, request, render_template, redirect, session, u
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
-import sqlite3, threading, time as _time, schedule as sched, os, json, secrets, traceback, calendar
+import sqlite3, threading, time as _time, schedule as sched, os, json, secrets, traceback, calendar, re
 from datetime import datetime, date, timedelta
 from google import genai
 
@@ -213,8 +213,42 @@ def init_db():
         note TEXT NOT NULL,
         created_at TEXT
     )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS board_columns (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        key TEXT NOT NULL,
+        label TEXT NOT NULL,
+        position INTEGER DEFAULT 0,
+        is_locked INTEGER DEFAULT 0,
+        UNIQUE(user_id, key)
+    )""")
     db.execute("INSERT OR IGNORE INTO projects (id,user_id,name,family,color) VALUES (1,0,'personal','personal','#6B21A8')")
     db.commit()
+
+
+DEFAULT_COLUMNS = [("todo", "To Do", 1), ("in_progress", "In Progress", 0),
+                    ("blocked", "Blocked", 0), ("done", "Done", 1)]
+
+
+def ensure_default_columns(uid, db):
+    count = db.execute("SELECT COUNT(*) FROM board_columns WHERE user_id=?", (uid,)).fetchone()[0]
+    if count == 0:
+        for i, (key, label, locked) in enumerate(DEFAULT_COLUMNS):
+            db.execute(
+                "INSERT INTO board_columns (user_id,key,label,position,is_locked) VALUES (?,?,?,?,?)",
+                (uid, key, label, i, locked)
+            )
+        db.commit()
+
+
+def _slugify_column_key(label, uid, db):
+    base = re.sub(r'[^a-z0-9]+', '_', label.strip().lower()).strip('_') or 'column'
+    key, i = base, 1
+    existing = {r[0] for r in db.execute("SELECT key FROM board_columns WHERE user_id=?", (uid,)).fetchall()}
+    while key in existing:
+        i += 1
+        key = f"{base}_{i}"
+    return key
 
 
 def get_or_create_project(name, family, db=None, uid=None):
@@ -715,6 +749,75 @@ def reorder_tasks():
                     )
         else:
             db.execute("UPDATE tasks SET position=? WHERE id=? AND user_id=?", (idx, tid, uid))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/columns")
+def get_columns():
+    db = get_db()
+    uid = current_user.id
+    ensure_default_columns(uid, db)
+    rows = db.execute("SELECT * FROM board_columns WHERE user_id=? ORDER BY position", (uid,)).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/columns", methods=["POST"])
+def add_column():
+    d = request.json
+    uid = current_user.id
+    label = (d.get("label") or "").strip()
+    if not label:
+        return jsonify({"error": "Label required"}), 400
+    db = get_db()
+    ensure_default_columns(uid, db)
+    key = _slugify_column_key(label, uid, db)
+    next_pos = db.execute(
+        "SELECT COALESCE(MAX(position), -1) + 1 FROM board_columns WHERE user_id=?", (uid,)
+    ).fetchone()[0]
+    db.execute(
+        "INSERT INTO board_columns (user_id,key,label,position,is_locked) VALUES (?,?,?,?,0)",
+        (uid, key, label, next_pos)
+    )
+    db.commit()
+    return jsonify({"ok": True, "key": key})
+
+
+@app.route("/api/columns/<int:cid>", methods=["PATCH"])
+def update_column(cid):
+    d = request.json
+    uid = current_user.id
+    db = get_db()
+    col = db.execute("SELECT * FROM board_columns WHERE id=? AND user_id=?", (cid, uid)).fetchone()
+    if not col:
+        return jsonify({"error": "Not found"}), 404
+    if "label" in d:
+        if col["is_locked"]:
+            return jsonify({"error": "This column can't be renamed"}), 400
+        label = (d["label"] or "").strip()
+        if not label:
+            return jsonify({"error": "Label required"}), 400
+        db.execute("UPDATE board_columns SET label=? WHERE id=?", (label, cid))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/columns/<int:cid>", methods=["DELETE"])
+def delete_column(cid):
+    uid = current_user.id
+    db = get_db()
+    col = db.execute("SELECT * FROM board_columns WHERE id=? AND user_id=?", (cid, uid)).fetchone()
+    if not col:
+        return jsonify({"error": "Not found"}), 404
+    if col["is_locked"]:
+        return jsonify({"error": "This column can't be deleted"}), 400
+    remaining = db.execute(
+        "SELECT COUNT(*) FROM tasks WHERE user_id=? AND status=? AND (archived IS NULL OR archived=0)",
+        (uid, col["key"])
+    ).fetchone()[0]
+    if remaining > 0:
+        return jsonify({"error": f"Move the {remaining} task(s) out of this column before deleting it."}), 400
+    db.execute("DELETE FROM board_columns WHERE id=?", (cid,))
     db.commit()
     return jsonify({"ok": True})
 
