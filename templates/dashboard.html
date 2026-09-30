@@ -125,6 +125,12 @@
     .col-body::-webkit-scrollbar { width: 6px; }
     .col-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
     .kanban-columns { display: flex; gap: 14px; flex: 1; }
+    .col-drag-handle { cursor: grab; color: var(--text-faint); font-size: 12px; flex-shrink: 0;
+      padding: 0 5px 0 0; opacity: 0.6; }
+    .col-drag-handle:hover { opacity: 1; }
+    .col-drag-handle:active { cursor: grabbing; }
+    .column.col-dragging { opacity: 0.4; }
+    .column.collapsed .col-drag-handle { padding: 0 0 5px; }
     .col-header-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
     .col-header-label:hover { color: var(--text-muted); }
     .col-rename-input { flex: 1; background: var(--surface-btn); border: 1px solid var(--accent);
@@ -513,7 +519,8 @@
   </div>
 
   <div class="kanban">
-    <div class="kanban-columns" id="kanban-columns"></div>
+    <div class="kanban-columns" id="kanban-columns"
+         ondragover="kanbanColumnsDragOver(event)" ondrop="kanbanColumnsDrop(event)"></div>
     <div class="col-archive" id="col-archive-wrapper">
       <div class="col-header">Archived <span class="col-count" id="count-archived">0</span></div>
       <div class="col-body" id="col-archived"></div>
@@ -723,8 +730,12 @@
   }
 
   function columnHeaderHTML(c) {
+    const handle = `<span class="col-drag-handle" draggable="true"
+        ondragstart="colHeaderDragStart(event,${c.id})" ondragend="colHeaderDragEnd(event)"
+        title="Drag to reorder">&#x2630;</span>`;
     if (c.key === 'done') {
       return `<div class="col-header" onclick="if(document.getElementById('col-done-wrapper').classList.contains('collapsed'))toggleDoneCollapse()">
+        ${handle}
         <span>${esc(c.label)} <span class="col-count" id="count-${c.key}">0</span></span>
         <button class="col-collapse-btn" id="done-collapse-btn" onclick="event.stopPropagation();toggleDoneCollapse()" title="Collapse">‹</button>
       </div>`;
@@ -733,6 +744,7 @@
     const del = c.is_locked ? '' : `<button class="col-delete-btn" title="Delete column"
         onclick="event.stopPropagation();deleteColumn(${c.id})">&#x2715;</button>`;
     return `<div class="col-header" id="col-header-${c.id}">
+      ${handle}
       <span class="col-header-label"${rename} title="${c.is_locked ? '' : 'Click to rename'}">${esc(c.label)}</span>
       <span class="col-count" id="count-${c.key}">0</span>
       ${del}
@@ -742,7 +754,7 @@
   function renderColumnsShell() {
     const mount = document.getElementById('kanban-columns');
     mount.innerHTML = boardColumns.map(c => `
-      <div class="column" id="${c.key === 'done' ? 'col-done-wrapper' : 'col-wrapper-' + c.id}">
+      <div class="column" id="${c.key === 'done' ? 'col-done-wrapper' : 'col-wrapper-' + c.id}" data-cid="${c.id}">
         ${columnHeaderHTML(c)}
         <div class="col-body" id="col-${c.key}"
              ondragover="colDragOver(event)" ondragleave="colDragLeave(event)" ondrop="colDrop(event,'${c.key}')"></div>
@@ -751,6 +763,62 @@
         <button class="column-add-btn" id="column-add-btn" onclick="startAddColumn()">+ Column</button>
       </div>`;
     applyDoneCollapse();
+  }
+
+  // ── Column (swimlane) reordering ──
+  let columnDragId = null;
+
+  function colHeaderDragStart(e, cid) {
+    columnDragId = cid;
+    e.dataTransfer.effectAllowed = 'move';
+    e.stopPropagation();
+    setTimeout(() => {
+      const wrapper = document.querySelector(`.column[data-cid="${cid}"]`);
+      if (wrapper) wrapper.classList.add('col-dragging');
+    }, 0);
+  }
+
+  function colHeaderDragEnd(e) {
+    e.stopPropagation();
+    document.querySelectorAll('.column.col-dragging').forEach(el => el.classList.remove('col-dragging'));
+  }
+
+  function columnAfterElement(container, x) {
+    const els = [...container.querySelectorAll('.column:not(.col-dragging)')];
+    return els.reduce((closest, child) => {
+      const box = child.getBoundingClientRect();
+      const offset = x - box.left - box.width / 2;
+      if (offset < 0 && offset > closest.offset) return { offset, element: child };
+      return closest;
+    }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+  }
+
+  function kanbanColumnsDragOver(e) {
+    if (columnDragId === null) return;
+    e.preventDefault();
+    const container = document.getElementById('kanban-columns');
+    const dragging = container.querySelector('.column.col-dragging');
+    if (!dragging) return;
+    const after = columnAfterElement(container, e.clientX);
+    const addWrapper = document.getElementById('column-add-wrapper');
+    if (after == null) container.insertBefore(dragging, addWrapper);
+    else container.insertBefore(dragging, after);
+  }
+
+  async function kanbanColumnsDrop(e) {
+    if (columnDragId === null) return;
+    e.preventDefault();
+    columnDragId = null;
+    const container = document.getElementById('kanban-columns');
+    const order = [...container.querySelectorAll('.column')].map(el => Number(el.dataset.cid));
+    document.querySelectorAll('.column.col-dragging').forEach(el => el.classList.remove('col-dragging'));
+    await fetch('/api/columns/reorder', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order })
+    });
+    await loadColumns();
+    renderBoard();
   }
 
   function startAddColumn() {

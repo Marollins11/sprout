@@ -802,6 +802,18 @@ def update_column(cid):
     return jsonify({"ok": True})
 
 
+@app.route("/api/columns/reorder", methods=["PATCH"])
+def reorder_columns():
+    d = request.json
+    uid = current_user.id
+    order = d.get("order", [])
+    db = get_db()
+    for idx, cid in enumerate(order):
+        db.execute("UPDATE board_columns SET position=? WHERE id=? AND user_id=?", (idx, cid, uid))
+    db.commit()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/columns/<int:cid>", methods=["DELETE"])
 def delete_column(cid):
     uid = current_user.id
