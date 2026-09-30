@@ -149,6 +149,13 @@
     .column-add-input { background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius-sm);
       font-size: 13px; color: var(--text); padding: 8px 10px; margin-top: 2px; }
     .column-add-input:focus { outline: none; }
+    .col-family-toggles { display: flex; gap: 4px; padding: 0 10px 8px; }
+    .col-family-chip { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--fam-color);
+      background: var(--fam-color); color: #fff; font-size: 9px; font-weight: 700; line-height: 16px;
+      text-align: center; cursor: pointer; padding: 0; opacity: 0.9; transition: opacity 0.15s var(--ease); }
+    .col-family-chip.off { background: transparent; color: var(--fam-color); opacity: 0.45; }
+    .col-family-chip:hover { opacity: 1; }
+    .column.collapsed .col-family-toggles { display: none; }
 
     /* Cards */
     .card { background: var(--surface); border-radius: var(--radius-md); padding: 11px 13px;
@@ -731,6 +738,35 @@
     }
   }
 
+  const FAMILY_CHIPS = [['work', 'W', '#1F6FEB'], ['school', 'S', '#1A7F37'], ['personal', 'P', '#6B21A8']];
+
+  function columnHiddenFor(c, fam) {
+    return (c.hidden_families || '').split(',').filter(Boolean).includes(fam);
+  }
+
+  function columnFamilyTogglesHTML(c) {
+    return `<div class="col-family-toggles">` + FAMILY_CHIPS.map(([fam, letter, color]) => {
+      const hidden = columnHiddenFor(c, fam);
+      return `<button class="col-family-chip ${hidden ? 'off' : ''}" style="--fam-color:${color}"
+        title="${hidden ? 'Hidden from' : 'Shown in'} ${fam[0].toUpperCase()}${fam.slice(1)} filter — click to toggle"
+        onclick="event.stopPropagation();toggleColumnFamily(${c.id},'${fam}')">${letter}</button>`;
+    }).join('') + `</div>`;
+  }
+
+  async function toggleColumnFamily(cid, fam) {
+    const c = boardColumns.find(c => c.id === cid);
+    if (!c) return;
+    let list = (c.hidden_families || '').split(',').filter(Boolean);
+    list = list.includes(fam) ? list.filter(f => f !== fam) : [...list, fam];
+    await fetch(`/api/columns/${cid}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hidden_families: list })
+    });
+    await loadColumns();
+    renderBoard();
+  }
+
   function columnHeaderHTML(c) {
     const handle = `<span class="col-drag-handle" draggable="true"
         ondragstart="colHeaderDragStart(event,${c.id})" ondragend="colHeaderDragEnd(event)"
@@ -755,9 +791,13 @@
 
   function renderColumnsShell() {
     const mount = document.getElementById('kanban-columns');
-    mount.innerHTML = boardColumns.map(c => `
+    const visible = familyFilter === 'all'
+      ? boardColumns
+      : boardColumns.filter(c => !columnHiddenFor(c, familyFilter));
+    mount.innerHTML = visible.map(c => `
       <div class="column" id="${c.key === 'done' ? 'col-done-wrapper' : 'col-wrapper-' + c.id}" data-cid="${c.id}">
         ${columnHeaderHTML(c)}
+        ${columnFamilyTogglesHTML(c)}
         <div class="col-body" id="col-${c.key}"
              ondragover="colDragOver(event)" ondragleave="colDragLeave(event)" ondrop="colDrop(event,'${c.key}')"></div>
       </div>`).join('') + `
@@ -1353,6 +1393,7 @@
     subFilters.clear();
     document.querySelectorAll('.filter-pill[data-family]').forEach(b =>
       b.classList.toggle('active', b.dataset.family === fam));
+    renderColumnsShell();
     renderBoard();
     renderProjectFilters();
   }

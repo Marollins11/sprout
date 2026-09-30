@@ -222,6 +222,11 @@ def init_db():
         is_locked INTEGER DEFAULT 0,
         UNIQUE(user_id, key)
     )""")
+    for col, defn in [("hidden_families", "TEXT DEFAULT ''")]:
+        try:
+            db.execute(f"ALTER TABLE board_columns ADD COLUMN {col} {defn}")
+        except Exception:
+            pass
     db.execute("INSERT OR IGNORE INTO projects (id,user_id,name,family,color) VALUES (1,0,'personal','personal','#6B21A8')")
     db.commit()
 
@@ -798,6 +803,10 @@ def update_column(cid):
         if not label:
             return jsonify({"error": "Label required"}), 400
         db.execute("UPDATE board_columns SET label=? WHERE id=?", (label, cid))
+    if "hidden_families" in d:
+        valid = {"work", "school", "personal"}
+        families = [f for f in (d["hidden_families"] or []) if f in valid]
+        db.execute("UPDATE board_columns SET hidden_families=? WHERE id=?", (",".join(families), cid))
     db.commit()
     return jsonify({"ok": True})
 
