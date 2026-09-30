@@ -612,7 +612,7 @@
     </div>
     <div class="form-row">
       <label>Family</label>
-      <select id="task-family">
+      <select id="task-family" onchange="populateProjectSelect(this.value, '')">
         <option value="personal">Personal</option>
         <option value="work">Work</option>
         <option value="school">School</option>
@@ -620,7 +620,9 @@
     </div>
     <div class="form-row">
       <label>Sub-project</label>
-      <input type="text" id="task-project" placeholder="e.g. Q3 Review, Bio 101, Health" dir="ltr" style="text-align:left" />
+      <select id="task-project-select" onchange="handleProjectSelectChange()"></select>
+      <input type="text" id="task-project-new" placeholder="New sub-project name" dir="ltr"
+        style="text-align:left;display:none;margin-top:6px" />
     </div>
     <div class="form-row">
       <label>Due Date</label>
@@ -894,6 +896,7 @@
   async function initBoard() {
     await loadColumns();
     await loadTasks();
+    await loadProjects();
   }
 
   function toggleDueSort() {
@@ -1103,7 +1106,7 @@
     document.getElementById('detail-recurrence-interval').value = t.recurrence_interval || 1;
     toggleRecurrenceInterval('detail');
     document.getElementById('detail-family').value = t.family || 'personal';
-    document.getElementById('detail-project').value = t.project || '';
+    populateDetailProjectSelect(document.getElementById('detail-family').value, t.project || '');
     const descEl = document.getElementById('detail-desc');
     descEl.textContent = t.description || '';
     document.getElementById('detail-desc-edit').value = t.description || '';
@@ -1173,11 +1176,45 @@
     loadTasks();
   }
 
+  function populateDetailProjectSelect(family, selected) {
+    const sel = document.getElementById('detail-project-select');
+    const names = [...new Set(allProjects.filter(p => p.family === family).map(p => p.name))].sort();
+    sel.innerHTML = `<option value="">— same as family —</option>` +
+      names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('') +
+      `<option value="__new__">+ New sub-project…</option>`;
+    sel.value = names.includes(selected) ? selected : '';
+    document.getElementById('detail-project-new').style.display = 'none';
+    document.getElementById('detail-project-new').value = '';
+  }
+
+  function handleDetailProjectSelectChange() {
+    const sel = document.getElementById('detail-project-select');
+    const newInput = document.getElementById('detail-project-new');
+    if (sel.value === '__new__') {
+      newInput.style.display = '';
+      newInput.focus();
+    } else {
+      newInput.style.display = 'none';
+      newInput.value = '';
+      saveDetailGroup();
+    }
+  }
+
+  function handleDetailFamilyChange() {
+    populateDetailProjectSelect(document.getElementById('detail-family').value, '');
+    saveDetailGroup();
+  }
+
+  function currentDetailProject() {
+    const sel = document.getElementById('detail-project-select');
+    if (sel.value === '__new__') return document.getElementById('detail-project-new').value.trim();
+    return sel.value;
+  }
+
   async function saveDetailGroup() {
     if (!currentCardId) return;
     const family  = document.getElementById('detail-family').value;
-    const project = (document.getElementById('detail-project').value.trim() || family).toLowerCase();
-    document.getElementById('detail-project').value = project;
+    const project = (currentDetailProject() || family).toLowerCase();
     const r = await fetch(`/api/tasks/${currentCardId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -1190,6 +1227,7 @@
       badge.style.background = data.color;
     }
     loadTasks();
+    loadProjects();
   }
 
   function startDescEdit() {
@@ -1325,11 +1363,52 @@
     renderProjectFilters();
   }
 
+  // ── Sub-projects ──
+  let allProjects = [];
+
+  async function loadProjects() {
+    try {
+      const r = await fetch('/api/projects');
+      allProjects = await r.json();
+    } catch (e) {
+      console.warn('Could not load projects:', e);
+    }
+  }
+
+  function populateProjectSelect(family, selected) {
+    const sel = document.getElementById('task-project-select');
+    const names = [...new Set(allProjects.filter(p => p.family === family).map(p => p.name))].sort();
+    sel.innerHTML = `<option value="">— same as family —</option>` +
+      names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('') +
+      `<option value="__new__">+ New sub-project…</option>`;
+    sel.value = names.includes(selected) ? selected : '';
+    document.getElementById('task-project-new').style.display = 'none';
+    document.getElementById('task-project-new').value = '';
+  }
+
+  function handleProjectSelectChange() {
+    const sel = document.getElementById('task-project-select');
+    const newInput = document.getElementById('task-project-new');
+    if (sel.value === '__new__') {
+      newInput.style.display = '';
+      newInput.focus();
+    } else {
+      newInput.style.display = 'none';
+      newInput.value = '';
+    }
+  }
+
+  function currentTaskProject() {
+    const sel = document.getElementById('task-project-select');
+    if (sel.value === '__new__') return document.getElementById('task-project-new').value.trim();
+    return sel.value;
+  }
+
   // ── Modal ──
   function openModal() {
     document.getElementById('task-title').value = '';
-    document.getElementById('task-project').value = '';
     document.getElementById('task-family').value = (familyFilter !== 'all') ? familyFilter : 'personal';
+    populateProjectSelect(document.getElementById('task-family').value, '');
     document.getElementById('task-due').value = '';
     document.getElementById('task-recurrence').value = '';
     document.getElementById('task-recurrence-interval').value = 1;
@@ -1357,7 +1436,7 @@
     const title = document.getElementById('task-title').value.trim();
     if (!title) { document.getElementById('task-title').focus(); return; }
     const family      = document.getElementById('task-family').value;
-    const project     = document.getElementById('task-project').value.trim() || family;
+    const project     = currentTaskProject() || family;
     const due_date    = document.getElementById('task-due').value || null;
     const recurrence  = document.getElementById('task-recurrence').value || null;
     const recurrence_interval = Math.max(1, parseInt(document.getElementById('task-recurrence-interval').value, 10) || 1);
@@ -1370,6 +1449,7 @@
     });
     closeModal();
     loadTasks();
+    loadProjects();
   }
 
   // ── Calendar ──
@@ -2179,15 +2259,18 @@
     <div class="detail-section">
       <div class="detail-label">Group &amp; Sub-project</div>
       <div class="detail-group-row">
-        <select id="detail-family" onchange="saveDetailGroup()">
+        <select id="detail-family" onchange="handleDetailFamilyChange()">
           <option value="personal">Personal</option>
           <option value="work">Work</option>
           <option value="school">School</option>
         </select>
-        <input type="text" id="detail-project" placeholder="Sub-project"
-               onblur="saveDetailGroup()"
-               onkeydown="if(event.key==='Enter')this.blur()" />
+        <select id="detail-project-select" onchange="handleDetailProjectSelectChange()"
+                style="flex:1;min-width:0"></select>
       </div>
+      <input type="text" id="detail-project-new" placeholder="New sub-project name"
+             style="display:none;margin-top:6px;width:100%"
+             onblur="saveDetailGroup()"
+             onkeydown="if(event.key==='Enter')this.blur()" />
     </div>
     <div class="detail-section">
       <div class="detail-label">Status</div>
