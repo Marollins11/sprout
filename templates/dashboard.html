@@ -783,20 +783,24 @@
     const handle = `<span class="col-drag-handle" draggable="true"
         ondragstart="colHeaderDragStart(event,${c.id})" ondragend="colHeaderDragEnd(event)"
         title="Drag to reorder">&#x2630;</span>`;
+    const collapseBtn = `<button class="col-collapse-btn" id="collapse-btn-${c.id}"
+        onclick="event.stopPropagation();toggleColumnCollapse(${c.id})" title="Collapse">‹</button>`;
     if (c.key === 'done') {
-      return `<div class="col-header" onclick="if(document.getElementById('col-done-wrapper').classList.contains('collapsed'))toggleDoneCollapse()">
+      return `<div class="col-header" onclick="if(document.getElementById('col-wrapper-${c.id}').classList.contains('collapsed'))toggleColumnCollapse(${c.id})">
         ${handle}
         <span>${esc(c.label)} <span class="col-count" id="count-${c.key}">0</span></span>
-        <button class="col-collapse-btn" id="done-collapse-btn" onclick="event.stopPropagation();toggleDoneCollapse()" title="Collapse">‹</button>
+        ${collapseBtn}
       </div>`;
     }
     const rename = c.is_locked ? '' : ` onclick="event.stopPropagation();startRenameColumn(${c.id})"`;
     const del = c.is_locked ? '' : `<button class="col-delete-btn" title="Delete column"
         onclick="event.stopPropagation();deleteColumn(${c.id})">&#x2715;</button>`;
-    return `<div class="col-header" id="col-header-${c.id}">
+    return `<div class="col-header" id="col-header-${c.id}"
+        onclick="if(document.getElementById('col-wrapper-${c.id}').classList.contains('collapsed'))toggleColumnCollapse(${c.id})">
       ${handle}
       <span class="col-header-label"${rename} title="${c.is_locked ? '' : 'Click to rename'}">${esc(c.label)}</span>
       <span class="col-count" id="count-${c.key}">0</span>
+      ${collapseBtn}
       ${del}
     </div>`;
   }
@@ -807,7 +811,7 @@
       ? boardColumns
       : boardColumns.filter(c => !columnHiddenFor(c, familyFilter));
     mount.innerHTML = visible.map(c => `
-      <div class="column" id="${c.key === 'done' ? 'col-done-wrapper' : 'col-wrapper-' + c.id}" data-cid="${c.id}">
+      <div class="column" id="col-wrapper-${c.id}" data-cid="${c.id}">
         ${columnHeaderHTML(c)}
         ${columnFamilyTogglesHTML(c)}
         <div class="col-body" id="col-${c.key}"
@@ -816,7 +820,7 @@
       <div class="column-add" id="column-add-wrapper">
         <button class="column-add-btn" id="column-add-btn" onclick="startAddColumn()">+ Column</button>
       </div>`;
-    applyDoneCollapse();
+    applyColumnCollapse();
   }
 
   // ── Column (swimlane) reordering ──
@@ -2230,21 +2234,33 @@
     loadTasks();
   }
 
-  // ── Done column collapse ──
-  let doneCollapsed = localStorage.getItem('done-collapsed') === '1';
+  // ── Column collapse ──
+  let collapsedColumns = new Set();
+  try {
+    collapsedColumns = new Set(JSON.parse(localStorage.getItem('collapsed-columns') || '[]'));
+  } catch (e) { collapsedColumns = new Set(); }
 
-  function toggleDoneCollapse() {
-    doneCollapsed = !doneCollapsed;
-    localStorage.setItem('done-collapsed', doneCollapsed ? '1' : '0');
-    applyDoneCollapse();
+  function saveCollapsedColumns() {
+    localStorage.setItem('collapsed-columns', JSON.stringify([...collapsedColumns]));
   }
 
-  function applyDoneCollapse() {
-    const col = document.getElementById('col-done-wrapper');
-    const btn = document.getElementById('done-collapse-btn');
-    col.classList.toggle('collapsed', doneCollapsed);
-    btn.textContent = doneCollapsed ? '›' : '‹';
-    btn.title = doneCollapsed ? 'Expand' : 'Collapse';
+  function toggleColumnCollapse(cid) {
+    if (collapsedColumns.has(cid)) collapsedColumns.delete(cid);
+    else collapsedColumns.add(cid);
+    saveCollapsedColumns();
+    applyColumnCollapse();
+  }
+
+  function applyColumnCollapse() {
+    boardColumns.forEach(c => {
+      const col = document.getElementById('col-wrapper-' + c.id);
+      const btn = document.getElementById('collapse-btn-' + c.id);
+      if (!col || !btn) return;
+      const isCollapsed = collapsedColumns.has(c.id);
+      col.classList.toggle('collapsed', isCollapsed);
+      btn.textContent = isCollapsed ? '›' : '‹';
+      btn.title = isCollapsed ? 'Expand' : 'Collapse';
+    });
   }
 
   // ── Init ──
