@@ -662,16 +662,22 @@ def add_task():
     family = d.get("family", "personal").strip().lower()
     color = get_or_create_project(project, family, uid=uid)
     db = get_db()
+    ensure_default_columns(uid, db)
+    valid_keys = {r[0] for r in db.execute("SELECT key FROM board_columns WHERE user_id=?", (uid,)).fetchall()}
+    status = d.get("status") or "todo"
+    if status not in valid_keys:
+        status = "todo"
     next_pos = db.execute(
-        "SELECT COALESCE(MAX(position), -1) + 1 FROM tasks WHERE user_id=? AND status='todo'", (uid,)
+        "SELECT COALESCE(MAX(position), -1) + 1 FROM tasks WHERE user_id=? AND status=?", (uid, status)
     ).fetchone()[0]
+    done_at = datetime.now().isoformat() if status == "done" else None
     db.execute(
-        "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description,user_id,priority,position,recurrence,recurrence_interval) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (d["title"], "todo", project,
+        "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description,user_id,priority,position,recurrence,recurrence_interval,done_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (d["title"], status, project,
          family, color, datetime.now().isoformat(),
          d.get("due_date"), d.get("description"), uid, d.get("priority") or None, next_pos,
-         d.get("recurrence") or None, max(1, int(d.get("recurrence_interval") or 1)))
+         d.get("recurrence") or None, max(1, int(d.get("recurrence_interval") or 1)), done_at)
     )
     db.commit()
     return jsonify({"ok": True, "color": color})

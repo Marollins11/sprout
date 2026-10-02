@@ -618,6 +618,10 @@
       <input type="text" id="task-title" placeholder="What needs to be done?" dir="ltr" style="text-align:left" />
     </div>
     <div class="form-row">
+      <label>Status</label>
+      <select id="task-status"></select>
+    </div>
+    <div class="form-row">
       <label>Family</label>
       <select id="task-family" onchange="populateProjectSelect(this.value, '')">
         <option value="personal">Personal</option>
@@ -1446,8 +1450,15 @@
   }
 
   // ── Modal ──
+  function populateTaskStatusSelect() {
+    const sel = document.getElementById('task-status');
+    sel.innerHTML = boardColumns.map(c => `<option value="${c.key}">${esc(c.label)}</option>`).join('');
+    sel.value = 'todo';
+  }
+
   function openModal() {
     document.getElementById('task-title').value = '';
+    populateTaskStatusSelect();
     document.getElementById('task-family').value = (familyFilter !== 'all') ? familyFilter : 'personal';
     populateProjectSelect(document.getElementById('task-family').value, '');
     document.getElementById('task-due').value = '';
@@ -1476,6 +1487,7 @@
   async function submitTask() {
     const title = document.getElementById('task-title').value.trim();
     if (!title) { document.getElementById('task-title').focus(); return; }
+    const status      = document.getElementById('task-status').value || 'todo';
     const family      = document.getElementById('task-family').value;
     const project     = currentTaskProject() || family;
     const due_date    = document.getElementById('task-due').value || null;
@@ -1486,7 +1498,7 @@
     await fetch('/api/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, family, project, due_date, recurrence, recurrence_interval, priority, description })
+      body: JSON.stringify({ title, status, family, project, due_date, recurrence, recurrence_interval, priority, description })
     });
     closeModal();
     loadTasks();
