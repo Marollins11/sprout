@@ -114,7 +114,7 @@
     /* Kanban columns */
     .kanban { display: flex; gap: 14px; padding: 16px 24px;
               flex: 1; overflow-x: auto; overflow-y: hidden; }
-    .column { flex: 1; min-width: 260px; max-width: 400px; display: flex; flex-direction: column; }
+    .column { flex: 1; min-width: 260px; max-width: 420px; display: flex; flex-direction: column; }
     .col-header { display: flex; align-items: center; justify-content: space-between;
                   padding: 8px 10px 12px; font-size: 11px; font-weight: 700;
                   letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); }
@@ -141,7 +141,7 @@
       color: var(--text-faint); padding: 1px 5px; border-radius: 4px; line-height: 1; flex-shrink: 0;
       opacity: 0.5; transition: opacity 0.15s var(--ease), color 0.15s var(--ease); }
     .col-delete-btn:hover { opacity: 1; color: #dc2626; background: var(--border); }
-    .column-add { flex: 1; min-width: 220px; max-width: 320px; display: flex; flex-direction: column; }
+    .column-add { flex: 0 0 180px; min-width: 180px; max-width: 180px; display: flex; flex-direction: column; }
     .column-add-btn { background: none; border: 1px dashed var(--border); border-radius: var(--radius-md);
       color: var(--text-faint); font-size: 12px; font-weight: 600; cursor: pointer; padding: 10px;
       margin-top: 2px; transition: border-color 0.15s var(--ease), color 0.15s var(--ease); }
@@ -149,10 +149,12 @@
     .column-add-input { background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius-sm);
       font-size: 13px; color: var(--text); padding: 8px 10px; margin-top: 2px; }
     .column-add-input:focus { outline: none; }
-    .col-family-toggles { display: flex; gap: 4px; padding: 0 10px 8px; }
+    .col-family-toggles { display: flex; gap: 4px; padding: 0 10px; max-height: 0; opacity: 0;
+      overflow: hidden; transition: max-height 0.15s var(--ease), opacity 0.15s var(--ease), padding 0.15s var(--ease); }
+    .column:hover .col-family-toggles, .column:focus-within .col-family-toggles { max-height: 24px; opacity: 1; padding: 0 10px 8px; }
     .col-family-chip { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--fam-color);
       background: var(--fam-color); color: #fff; font-size: 9px; font-weight: 700; line-height: 16px;
-      text-align: center; cursor: pointer; padding: 0; opacity: 0.9; transition: opacity 0.15s var(--ease); }
+      text-align: center; cursor: pointer; padding: 0; opacity: 0.9; transition: opacity 0.15s var(--ease); flex-shrink: 0; }
     .col-family-chip.off { background: transparent; color: var(--fam-color); opacity: 0.45; }
     .col-family-chip:hover { opacity: 1; }
     .column.collapsed .col-family-toggles { display: none; }
@@ -212,7 +214,7 @@
     .archive-toggle-btn:hover { border-color: var(--accent); color: var(--text); transform: translateY(-1px); }
     .archive-toggle-btn.active { background: #374151; color: #fff; border-color: transparent; box-shadow: var(--shadow-sm); }
     /* Detail modal */
-    .detail-modal { background: var(--surface); border-radius: var(--radius-lg); padding: 26px;
+    .detail-modal { background: var(--surface); border-radius: var(--radius-lg); padding: 26px 26px 0;
                     width: 540px; max-width: 92vw; max-height: 82vh; overflow-y: auto;
                     border: 1px solid var(--border); box-shadow: var(--shadow-lg); }
     .detail-header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
@@ -365,7 +367,11 @@
     .btn-primary:hover { background: var(--accent-hover); transform: translateY(-1px); }
     .btn-secondary { background: var(--surface-btn); color: var(--text-muted); }
     .btn-secondary:hover { background: var(--border); color: var(--text); }
+    .btn-danger { background: rgba(220,38,38,0.12); color: #f87171; }
+    .btn-danger:hover { background: rgba(220,38,38,0.22); color: #fca5a5; }
     .btn:active { transform: translateY(0); }
+    .detail-modal .modal-btns { position: sticky; bottom: 0; background: var(--surface);
+      margin: 22px -26px 0; padding: 16px 26px 26px; border-top: 1px solid var(--border-sub); }
 
     /* ── CALENDAR ── */
     #cal-view { display: none; flex-direction: column; height: calc(100vh - 56px); }
@@ -440,8 +446,9 @@
     /* ── ACCOUNTS ── */
     #accounts-view { display: none; padding: 32px 24px; overflow-y: auto;
                      height: calc(100vh - 56px); }
-    #accounts-view.show { display: block; }
-    .accounts-section { max-width: 520px; margin-bottom: 36px; }
+    #accounts-view.show { display: flex; flex-wrap: wrap; align-content: flex-start;
+                           gap: 0 56px; max-width: 1120px; margin: 0 auto; }
+    .accounts-section { flex: 0 1 auto; max-width: 520px; margin-bottom: 36px; }
     .accounts-section h2 { font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
                            text-transform: uppercase; color: var(--text-faint);
                            margin-bottom: 14px; }
@@ -714,10 +721,11 @@
   };
   let boardColumns = [];
 
-  function nextColumnKey(key) {
-    const idx = boardColumns.findIndex(c => c.key === key);
-    if (idx === -1 || idx === boardColumns.length - 1) return null;
-    return boardColumns[idx + 1].key;
+  function nextColumnKey(key, family) {
+    const visible = family ? boardColumns.filter(c => !columnHiddenFor(c, family)) : boardColumns;
+    const idx = visible.findIndex(c => c.key === key);
+    if (idx === -1 || idx === visible.length - 1) return null;
+    return visible[idx + 1].key;
   }
 
   function columnLabel(key) {
@@ -1043,7 +1051,7 @@
   }
 
   function cardHTML(t) {
-    const nextStatus = nextColumnKey(t.status);
+    const nextStatus = nextColumnKey(t.status, t.family);
     const nextLabel  = nextStatus ? columnLabel(nextStatus) : null;
     const dueStr     = formatDue(t.due_date);
     const ownDueCls  = dueBucket(t.due_date);
@@ -2370,7 +2378,7 @@
     </div>
     <div class="modal-btns">
       <button class="btn btn-secondary" id="detail-flag-btn" onclick="toggleDetailFlag()">&#x1F6A9; Flag</button>
-      <button class="btn btn-secondary" onclick="deleteDetailCard()" style="color:#f87171">Delete</button>
+      <button class="btn btn-danger" onclick="deleteDetailCard()">Delete</button>
       <button class="btn btn-secondary" style="margin-left:auto" onclick="closeCard()">Close</button>
     </div>
   </div>
