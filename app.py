@@ -671,7 +671,7 @@ def add_task():
         "SELECT COALESCE(MAX(position), -1) + 1 FROM tasks WHERE user_id=? AND status=?", (uid, status)
     ).fetchone()[0]
     done_at = datetime.now().isoformat() if status == "done" else None
-    db.execute(
+    cur = db.execute(
         "INSERT INTO tasks (title,status,project,family,color,created_at,due_date,description,user_id,priority,position,recurrence,recurrence_interval,done_at) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (d["title"], status, project,
@@ -680,7 +680,7 @@ def add_task():
          d.get("recurrence") or None, max(1, int(d.get("recurrence_interval") or 1)), done_at)
     )
     db.commit()
-    return jsonify({"ok": True, "color": color})
+    return jsonify({"ok": True, "color": color, "id": cur.lastrowid})
 
 
 @app.route("/api/tasks/<int:tid>", methods=["PATCH"])
