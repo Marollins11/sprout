@@ -200,7 +200,11 @@
       transition: color 0.15s var(--ease), background 0.15s var(--ease); flex-shrink: 0; }
     .col-collapse-btn:hover { color: var(--text); background: var(--border); }
     .column.collapsed { flex: 0 0 44px; min-width: 44px; overflow: hidden; }
-    .column.collapsed .col-body { display: none; }
+    .column.collapsed .col-body, .column.collapsed .col-add-task-btn { display: none; }
+    .col-add-task-btn { background: none; border: none; border-radius: var(--radius-sm); color: var(--text-faint);
+      font-size: 12px; font-weight: 600; cursor: pointer; padding: 8px 10px; text-align: left; flex-shrink: 0;
+      transition: color 0.15s var(--ease), background 0.15s var(--ease); }
+    .col-add-task-btn:hover { color: var(--text); background: var(--surface-btn); }
     .column.collapsed .col-header { writing-mode: vertical-rl; justify-content: flex-start;
       padding: 10px 8px; gap: 6px; cursor: pointer; }
     .column.collapsed .col-header .col-count { writing-mode: horizontal-tb; }
@@ -638,9 +642,9 @@
     </div>
     <div class="form-row">
       <label>Sub-project</label>
-      <select id="task-project-select" onchange="handleProjectSelectChange()"></select>
-      <input type="text" id="task-project-new" placeholder="New sub-project name" dir="ltr"
-        style="text-align:left;display:none;margin-top:6px" />
+      <input type="text" id="task-project" list="task-project-list" autocomplete="off"
+        placeholder="Same as family — type or pick one" dir="ltr" style="text-align:left" />
+      <datalist id="task-project-list"></datalist>
     </div>
     <div class="form-row">
       <label>Due Date</label>
@@ -816,6 +820,7 @@
         ${columnFamilyTogglesHTML(c)}
         <div class="col-body" id="col-${c.key}"
              ondragover="colDragOver(event)" ondragleave="colDragLeave(event)" ondrop="colDrop(event,'${c.key}')"></div>
+        <button class="col-add-task-btn" onclick="openModal('${c.key}')">+ Add task</button>
       </div>`).join('') + `
       <div class="column-add" id="column-add-wrapper">
         <button class="column-add-btn" id="column-add-btn" onclick="startAddColumn()">+ Column</button>
@@ -952,7 +957,6 @@
   async function initBoard() {
     await loadColumns();
     await loadTasks();
-    await loadProjects();
   }
 
   function toggleDueSort() {
@@ -1233,27 +1237,8 @@
   }
 
   function populateDetailProjectSelect(family, selected) {
-    const sel = document.getElementById('detail-project-select');
-    const names = [...new Set(allProjects.filter(p => p.family === family).map(p => p.name))].sort();
-    sel.innerHTML = `<option value="">— same as family —</option>` +
-      names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('') +
-      `<option value="__new__">+ New sub-project…</option>`;
-    sel.value = names.includes(selected) ? selected : '';
-    document.getElementById('detail-project-new').style.display = 'none';
-    document.getElementById('detail-project-new').value = '';
-  }
-
-  function handleDetailProjectSelectChange() {
-    const sel = document.getElementById('detail-project-select');
-    const newInput = document.getElementById('detail-project-new');
-    if (sel.value === '__new__') {
-      newInput.style.display = '';
-      newInput.focus();
-    } else {
-      newInput.style.display = 'none';
-      newInput.value = '';
-      saveDetailGroup();
-    }
+    fillProjectDatalist('detail-project-list', family);
+    document.getElementById('detail-project').value = selected && selected !== family ? selected : '';
   }
 
   function handleDetailFamilyChange() {
@@ -1262,9 +1247,7 @@
   }
 
   function currentDetailProject() {
-    const sel = document.getElementById('detail-project-select');
-    if (sel.value === '__new__') return document.getElementById('detail-project-new').value.trim();
-    return sel.value;
+    return document.getElementById('detail-project').value.trim();
   }
 
   async function saveDetailGroup() {
@@ -1283,7 +1266,6 @@
       badge.style.background = data.color;
     }
     loadTasks();
-    loadProjects();
   }
 
   function startDescEdit() {
@@ -1421,56 +1403,41 @@
   }
 
   // ── Sub-projects ──
-  let allProjects = [];
+  // Only suggest sub-projects that current (non-archived) tasks in this family
+  // actually use, most-used first, so stale names from old tasks drop off.
+  function usedProjectsFor(family) {
+    const counts = {};
+    allTasks.forEach(t => {
+      if (t.family !== family || !t.project || t.project === family) return;
+      counts[t.project] = (counts[t.project] || 0) + 1;
+    });
+    return Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b));
+  }
 
-  async function loadProjects() {
-    try {
-      const r = await fetch('/api/projects');
-      allProjects = await r.json();
-    } catch (e) {
-      console.warn('Could not load projects:', e);
-    }
+  function fillProjectDatalist(listId, family) {
+    document.getElementById(listId).innerHTML =
+      usedProjectsFor(family).map(n => `<option value="${esc(n)}"></option>`).join('');
   }
 
   function populateProjectSelect(family, selected) {
-    const sel = document.getElementById('task-project-select');
-    const names = [...new Set(allProjects.filter(p => p.family === family).map(p => p.name))].sort();
-    sel.innerHTML = `<option value="">— same as family —</option>` +
-      names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('') +
-      `<option value="__new__">+ New sub-project…</option>`;
-    sel.value = names.includes(selected) ? selected : '';
-    document.getElementById('task-project-new').style.display = 'none';
-    document.getElementById('task-project-new').value = '';
-  }
-
-  function handleProjectSelectChange() {
-    const sel = document.getElementById('task-project-select');
-    const newInput = document.getElementById('task-project-new');
-    if (sel.value === '__new__') {
-      newInput.style.display = '';
-      newInput.focus();
-    } else {
-      newInput.style.display = 'none';
-      newInput.value = '';
-    }
+    fillProjectDatalist('task-project-list', family);
+    document.getElementById('task-project').value = selected || '';
   }
 
   function currentTaskProject() {
-    const sel = document.getElementById('task-project-select');
-    if (sel.value === '__new__') return document.getElementById('task-project-new').value.trim();
-    return sel.value;
+    return document.getElementById('task-project').value.trim();
   }
 
   // ── Modal ──
-  function populateTaskStatusSelect() {
+  function populateTaskStatusSelect(status) {
     const sel = document.getElementById('task-status');
     sel.innerHTML = boardColumns.map(c => `<option value="${c.key}">${esc(c.label)}</option>`).join('');
-    sel.value = 'todo';
+    sel.value = boardColumns.some(c => c.key === status) ? status : 'todo';
   }
 
-  function openModal() {
+  function openModal(status) {
     document.getElementById('task-title').value = '';
-    populateTaskStatusSelect();
+    populateTaskStatusSelect(status);
     document.getElementById('task-family').value = (familyFilter !== 'all') ? familyFilter : 'personal';
     populateProjectSelect(document.getElementById('task-family').value, '');
     document.getElementById('task-due').value = '';
@@ -1514,7 +1481,6 @@
     });
     closeModal();
     loadTasks();
-    loadProjects();
   }
 
   // ── Calendar ──
@@ -2341,13 +2307,12 @@
           <option value="work">Work</option>
           <option value="school">School</option>
         </select>
-        <select id="detail-project-select" onchange="handleDetailProjectSelectChange()"
-                style="flex:1;min-width:0"></select>
+        <input type="text" id="detail-project" list="detail-project-list" autocomplete="off"
+               placeholder="Same as family" style="flex:1;min-width:0"
+               onchange="saveDetailGroup()"
+               onkeydown="if(event.key==='Enter')this.blur()" />
+        <datalist id="detail-project-list"></datalist>
       </div>
-      <input type="text" id="detail-project-new" placeholder="New sub-project name"
-             style="display:none;margin-top:6px;width:100%"
-             onblur="saveDetailGroup()"
-             onkeydown="if(event.key==='Enter')this.blur()" />
     </div>
     <div class="detail-section">
       <div class="detail-label">Status</div>
