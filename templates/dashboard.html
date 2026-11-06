@@ -221,6 +221,23 @@
     .parse-chip { font-size: 10px; font-weight: 600; color: var(--accent-hover); background: var(--accent-soft);
       border-radius: 8px; padding: 2px 7px; }
     .form-hint { font-size: 11px; color: var(--text-faint); margin-top: 4px; }
+    .form-hint kbd, .quick-add-hint kbd { font-family: inherit; font-weight: 700; color: var(--text-muted);
+      background: var(--surface-btn); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+
+    /* \ command menu */
+    .cmd-menu { position: fixed; z-index: 450; display: none; width: 240px; max-height: 300px; overflow-y: auto;
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md);
+      box-shadow: var(--shadow-lg); padding: 6px; }
+    .cmd-menu.show { display: block; }
+    .cmd-head { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-faint); padding: 4px 8px 6px; }
+    .cmd-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
+      background: none; border: none; color: var(--text); font-size: 13px; font-family: inherit; text-align: left;
+      padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+    .cmd-item.active { background: var(--accent-soft); }
+    .cmd-hint { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+    .cmd-empty { font-size: 12px; color: var(--text-faint); padding: 6px 8px; }
+    .cmd-menu .detail-date-input { width: 100%; }
 
     /* Search + due filters */
     .board-search { padding: 5px 12px; border-radius: 20px; font-size: 12px; width: 170px;
@@ -708,9 +725,10 @@
     <div class="form-row">
       <label>Title</label>
       <input type="text" id="task-title" placeholder="What needs to be done?" dir="ltr" style="text-align:left"
-        autocomplete="off" oninput="renderParsePreview('task-parse-preview', this.value)" />
+        autocomplete="off" oninput="renderParsePreview('task-parse-preview', this.value); cmdMenuUpdate(this)"
+        onblur="cmdMenuBlur()" />
       <div class="parse-preview" id="task-parse-preview" style="display:none"></div>
-      <div class="form-hint">Tip: “essay fri !high #econ” sets the date, priority and sub-project.</div>
+      <div class="form-hint">Type <kbd>\</kbd> to add a due date, priority, sub-project, family or repeat.</div>
     </div>
     <div class="form-row">
       <label>Status</label>
@@ -1570,6 +1588,7 @@
   }
 
   function closeModal() {
+    closeCmdMenu();
     document.getElementById('modal').classList.remove('show');
   }
 
@@ -2550,12 +2569,12 @@
     document.getElementById(`qa-${key}`).innerHTML = `
       <div class="quick-add-box">
         <input class="quick-add-input" id="qa-input-${key}" autocomplete="off"
-          placeholder="Task name — try “essay fri !high #econ”"
-          oninput="renderParsePreview('qa-preview-${key}', this.value)"
-          onkeydown="quickAddKey(event,'${key}')" onblur="quickAddBlur('${key}')" />
+          placeholder="Task name — type \\ for fields"
+          oninput="renderParsePreview('qa-preview-${key}', this.value); cmdMenuUpdate(this)"
+          onkeydown="quickAddKey(event,'${key}')" onblur="quickAddBlur('${key}'); cmdMenuBlur()" />
         <div class="parse-preview" id="qa-preview-${key}" style="display:none"></div>
         <div class="quick-add-actions">
-          <span class="quick-add-hint">Enter to add · Esc to close</span>
+          <span class="quick-add-hint"><kbd>\\</kbd> fields · Enter to add · Esc to close</span>
           <button class="quick-add-more" onmousedown="event.preventDefault()"
             onclick="quickAddMore('${key}')">More options…</button>
         </div>
@@ -2612,6 +2631,188 @@
     });
     loadTasks();
   }
+
+  // ── \ command menu ──
+  // Typing "\" in a task title opens a menu of fields; picking a field then a value swaps the
+  // "\…" text for the token parseQuickTask understands (fri, !high, #econ, @school, weekly).
+  const CMD_FIELDS = [
+    { key: 'due',      label: 'Due date',    aliases: ['date', 'when'] },
+    { key: 'priority', label: 'Priority',    aliases: ['pri', 'p'] },
+    { key: 'project',  label: 'Sub-project', aliases: ['sub', 'proj', 'tag'] },
+    { key: 'family',   label: 'Family',      aliases: ['fam', 'group'] },
+    { key: 'repeat',   label: 'Repeat',      aliases: ['every', 'rep', 'recur'] },
+  ];
+  const cmd = { input: null, start: 0, end: 0, field: null, items: [], active: 0 };
+
+  function cmdFieldFor(word) {
+    const w = word.toLowerCase();
+    return CMD_FIELDS.find(f => f.key === w || f.aliases.includes(w)) || null;
+  }
+
+  function cmdFamilyContext(input) {
+    const parsed = parseQuickTask(input.value);
+    if (parsed.family) return parsed.family;
+    if (input.id === 'task-title') return document.getElementById('task-family').value;
+    return defaultNewTaskGroup().family;
+  }
+
+  function cmdOptions(field, input) {
+    const today = todayStart();
+    const fmt = d => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    if (field === 'due') {
+      const days = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+      const names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const upcoming = [2, 3, 4, 5, 6, 7].map(n => addDays(today, n))
+        .map(d => ({ label: names[d.getDay()], hint: fmt(d), token: days[d.getDay()] }));
+      return [
+        { label: 'Today', hint: fmt(today), token: 'today' },
+        { label: 'Tomorrow', hint: fmt(addDays(today, 1)), token: 'tomorrow' },
+        ...upcoming,
+        { label: 'Next week', hint: fmt(addDays(today, weekdayOffset('mon', true))), token: 'next week' },
+        { label: 'Pick a date…', pick: true },
+      ];
+    }
+    if (field === 'priority') {
+      return [['High', 'high'], ['Medium', 'med'], ['Low', 'low']].map(([label, t]) => ({ label, token: '!' + t }));
+    }
+    if (field === 'family') {
+      return [['Work', 'work'], ['School', 'school'], ['Personal', 'personal']].map(([label, t]) => ({ label, token: '@' + t }));
+    }
+    if (field === 'repeat') {
+      return [['Every day', 'daily'], ['Every week', 'weekly'], ['Every 2 weeks', 'every 2 weeks'], ['Every month', 'monthly']]
+        .map(([label, token]) => ({ label, token }));
+    }
+    if (field === 'project') {
+      // This family's sub-projects first, then the others (picking one also switches family).
+      const fam = cmdFamilyContext(input);
+      const order = [fam, ...['work', 'school', 'personal'].filter(f => f !== fam)];
+      return order.flatMap(f => usedProjectsFor(f).map(name => ({
+        label: name, hint: f === fam ? '' : f, token: '#' + name.replace(/\s+/g, '-')
+      })));
+    }
+    return [];
+  }
+
+  function cmdMenuUpdate(input) {
+    const caret = input.selectionStart ?? input.value.length;
+    const before = input.value.slice(0, caret);
+    // Stage 2: "\priority h" — a known field followed by a filter for its values
+    let m = before.match(/(^|\s)\\(\w+)\s+([^\\]*)$/);
+    let field = m && cmdFieldFor(m[2]);
+    let query;
+    if (field) {
+      query = m[3];
+    } else {
+      // Stage 1: "\pri" — filtering the list of fields
+      m = before.match(/(^|\s)\\(\w*)$/);
+      if (!m) return closeCmdMenu();
+      query = m[2];
+    }
+    cmd.input = input;
+    cmd.start = m.index + m[1].length;
+    cmd.end = caret;
+    cmd.field = field ? field.key : null;
+    const q = query.trim().toLowerCase();
+    if (field) {
+      cmd.items = cmdOptions(field.key, input).filter(o => o.pick || !q || o.label.toLowerCase().includes(q));
+      if (field.key === 'project' && q && !cmd.items.some(o => o.label.toLowerCase() === q)) {
+        cmd.items.push({ label: `Create “${query.trim()}”`, token: '#' + q.replace(/\s+/g, '-') });
+      }
+    } else {
+      cmd.items = CMD_FIELDS.filter(f => !q || f.key.startsWith(q) || f.label.toLowerCase().startsWith(q) ||
+        f.aliases.some(a => a.startsWith(q))).map(f => ({ label: f.label, hint: '\\' + f.key, field: f.key }));
+    }
+    cmd.active = 0;
+    renderCmdMenu(field ? field.label : 'Add a field');
+  }
+
+  function renderCmdMenu(heading) {
+    const menu = document.getElementById('cmd-menu');
+    menu.innerHTML = `<div class="cmd-head">${esc(heading)}</div>` + (cmd.items.length
+      ? cmd.items.map((o, i) => `<button class="cmd-item ${i === cmd.active ? 'active' : ''}"
+          onmouseenter="cmdSetActive(${i})" onclick="cmdChoose(${i})">
+          <span>${esc(o.label)}</span>${o.hint ? `<span class="cmd-hint">${esc(o.hint)}</span>` : ''}</button>`).join('')
+      : `<div class="cmd-empty">No matches</div>`);
+    menu.classList.add('show');
+    positionCmdMenu();
+  }
+
+  function positionCmdMenu() {
+    const menu = document.getElementById('cmd-menu');
+    const r = cmd.input.getBoundingClientRect();
+    const h = menu.offsetHeight;
+    menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+    menu.style.top = (r.bottom + 6 + h > window.innerHeight ? Math.max(8, r.top - h - 6) : r.bottom + 6) + 'px';
+  }
+
+  function cmdSetActive(i) {
+    cmd.active = i;
+    document.querySelectorAll('#cmd-menu .cmd-item').forEach((el, j) => el.classList.toggle('active', j === i));
+  }
+
+  function cmdReplace(text) {
+    const inp = cmd.input;
+    const v = inp.value;
+    const after = v.slice(cmd.end).replace(/^\s+/, '');
+    inp.value = v.slice(0, cmd.start) + text + after;
+    const pos = cmd.start + text.length;
+    inp.focus();
+    inp.setSelectionRange(pos, pos);
+    inp.dispatchEvent(new Event('input'));
+  }
+
+  function cmdChoose(i) {
+    const o = cmd.items[i];
+    if (!o) return;
+    if (o.field) return cmdReplace(`\\${o.field} `);
+    if (o.pick) {
+      const menu = document.getElementById('cmd-menu');
+      menu.innerHTML = `<div class="cmd-head">Pick a date</div>
+        <input type="date" class="detail-date-input" id="cmd-date"
+          onchange="cmdPickDate(this.value)"
+          onkeydown="if(event.key==='Escape'){event.stopPropagation();closeCmdMenu();cmd.input.focus()}" />`;
+      positionCmdMenu();
+      const d = document.getElementById('cmd-date');
+      d.focus();
+      try { d.showPicker(); } catch (e) {}
+      return;
+    }
+    cmdReplace(o.token + ' ');
+  }
+
+  function cmdPickDate(val) {
+    if (!val) return;
+    const [y, m, d] = val.split('-').map(Number);
+    cmdReplace(`${m}/${d}/${y} `);
+  }
+
+  function closeCmdMenu() {
+    document.getElementById('cmd-menu').classList.remove('show');
+  }
+
+  function cmdMenuOpen() {
+    return document.getElementById('cmd-menu').classList.contains('show');
+  }
+
+  function cmdMenuBlur() {
+    setTimeout(() => {
+      const menu = document.getElementById('cmd-menu');
+      if (!menu.contains(document.activeElement) && document.activeElement !== cmd.input) closeCmdMenu();
+    }, 150);
+  }
+
+  // Capture phase so the menu gets arrows/Enter/Esc before the input's own handlers (submit, close).
+  document.addEventListener('keydown', e => {
+    if (!cmdMenuOpen() || e.target !== cmd.input) return;
+    const n = cmd.items.length;
+    if (e.key === 'ArrowDown' && n) { cmdSetActive((cmd.active + 1) % n); }
+    else if (e.key === 'ArrowUp' && n) { cmdSetActive((cmd.active - 1 + n) % n); }
+    else if ((e.key === 'Enter' || e.key === 'Tab') && n) { cmdChoose(cmd.active); }
+    else if (e.key === 'Escape') { closeCmdMenu(); }
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
 
   // ── Search + due filters ──
   function setSearch(q) {
@@ -2976,6 +3177,7 @@
     </div>
     <div class="detail-label" style="margin-top:18px">Typing a task</div>
     <div class="shortcut-list">
+      <kbd>\</kbd><span>Menu of fields — pick one, then a value (↑ ↓ Enter, or keep typing to filter)</span>
       <kbd>fri · tomorrow · oct 31 · 10/31 · in 3 days · next tue</kbd><span>Due date</span>
       <kbd>!high · !med · !low</kbd><span>Priority</span>
       <kbd>#econ</kbd><span>Sub-project (use - for spaces: #physics-101)</span>
@@ -2989,6 +3191,7 @@
 </div>
 
 <div id="inline-pop" class="inline-pop" onclick="event.stopPropagation()"></div>
+<div id="cmd-menu" class="cmd-menu" onmousedown="if(!event.target.matches('input'))event.preventDefault()"></div>
 
 <div id="bulk-bar" class="bulk-bar">
   <span class="bulk-count" id="bulk-count"></span>
