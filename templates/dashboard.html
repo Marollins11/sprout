@@ -239,6 +239,26 @@
     .cmd-empty { font-size: 12px; color: var(--text-faint); padding: 6px 8px; }
     .cmd-menu .detail-date-input { width: 100%; }
 
+    /* New-user setup checklist */
+    .setup-banner { display: none; align-items: center; gap: 18px; flex-wrap: wrap; flex-shrink: 0;
+      margin: 14px 24px 0; padding: 14px 18px; border: 1px solid var(--accent); border-radius: var(--radius-md);
+      background: var(--accent-soft); }
+    .setup-banner.show { display: flex; }
+    .setup-banner h3 { font-size: 13px; font-weight: 700; color: var(--text); }
+    .setup-banner p { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    .setup-steps { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; }
+    .setup-step { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--text);
+      background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 6px 12px; cursor: pointer;
+      font-family: inherit; }
+    .setup-step:hover { border-color: var(--accent); }
+    .setup-step.done { color: var(--text-faint); cursor: default; text-decoration: line-through; }
+    .setup-step .tick { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--text-faint);
+      display: inline-flex; align-items: center; justify-content: center; font-size: 9px; color: #fff; }
+    .setup-step.done .tick { background: #22c55e; border-color: #22c55e; }
+    .setup-dismiss { background: none; border: none; color: var(--text-faint); font-size: 16px; cursor: pointer;
+      padding: 2px 6px; border-radius: 6px; }
+    .setup-dismiss:hover { color: var(--text); background: var(--surface-btn); }
+
     /* Search + due filters */
     .board-search { padding: 5px 12px; border-radius: 20px; font-size: 12px; width: 170px;
       border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: inherit;
@@ -597,6 +617,13 @@
     <button class="tab" id="tab-accounts" onclick="showTab('accounts')">Accounts</button>
   </div>
   <div style="margin-left:auto;display:flex;align-items:center;gap:14px;padding-right:110px">
+    {% if current_user.is_admin %}
+    <a href="/admin" style="font-size:12px;color:var(--text-muted);text-decoration:none;
+       padding:4px 10px;border:1px solid var(--border);border-radius:6px;transition:border-color 0.15s"
+       onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      Admin
+    </a>
+    {% endif %}
     <span style="font-size:12px;color:var(--text-muted)">{{ current_user.name }}</span>
     <a href="/logout" style="font-size:12px;color:var(--text-muted);text-decoration:none;
        padding:4px 10px;border:1px solid var(--border);border-radius:6px;transition:border-color 0.15s"
@@ -634,6 +661,15 @@
     </div>
   </div>
 
+  <div class="setup-banner" id="setup-banner">
+    <div>
+      <h3>Get set up</h3>
+      <p>Connect your accounts so assignments and events show up here on their own.</p>
+    </div>
+    <div class="setup-steps" id="setup-steps"></div>
+    <button class="setup-dismiss" title="Hide" onclick="dismissSetup()">&times;</button>
+  </div>
+
   <div class="kanban">
     <div class="kanban-columns" id="kanban-columns"
          ondragover="kanbanColumnsDragOver(event)" ondrop="kanbanColumnsDrop(event)"></div>
@@ -665,6 +701,12 @@
 <!-- ── ACCOUNTS VIEW ── -->
 <div id="accounts-view">
   <div class="accounts-section">
+    <h2>Your Account</h2>
+    <p style="font-size:13px;color:var(--text-muted)">Signed in as {{ current_user.email }} &middot;
+      <a href="/account/password" style="color:var(--accent-hover)">Change password</a></p>
+  </div>
+
+  <div class="accounts-section">
     <h2>Connected Calendars</h2>
     <div id="accounts-list"><div class="accounts-empty">Loading&hellip;</div></div>
   </div>
@@ -675,7 +717,7 @@
       <label style="color:#4ade80">Calendar Feed URL</label>
       <p id="canvas-feed-status" class="icloud-hint" style="margin-top:0;margin-bottom:8px">Loading&hellip;</p>
       <input type="url" id="canvas-feed-url" placeholder="https://yourschool.instructure.com/feeds/calendars/user_XXXX.ics" />
-      <p class="icloud-hint">In Canvas: Calendar &rarr; <strong>Calendar Feed</strong> link (bottom-left) &rarr; copy URL</p>
+      <p class="icloud-hint">In Canvas: open <strong>Calendar</strong>, click the <strong>Calendar Feed</strong> link under the list of calendars, and copy it. Then Save Feed &rarr; Sync Now and give each course a short name.</p>
       <div class="icloud-form-btns">
         <button class="btn btn-primary" style="background:#1A7F37" onclick="saveCanvasFeed()">Save Feed</button>
         <button class="btn btn-secondary" onclick="syncCanvasFeed()">Sync Now</button>
@@ -1070,6 +1112,7 @@
   async function initBoard() {
     await loadColumns();
     await loadTasks();
+    renderSetupBanner();
   }
 
   function toggleDueSort() {
@@ -1117,6 +1160,7 @@
     document.getElementById('accounts-view').classList.toggle('show', tab === 'accounts');
     if (tab === 'calendar') loadCalendar();
     if (tab === 'accounts') loadAccounts();
+    if (tab === 'kanban') renderSetupBanner();
   }
 
   // ── Kanban ──
@@ -2997,6 +3041,40 @@
   function bulkPriority(p) { if (p) bulkPatch({ priority: p === 'none' ? null : p }); }
   function bulkArchive() { bulkPatch({ archived: 1 }); }
   function bulkDelete() { deleteTasksWithUndo([...selectedIds]); }
+
+  // ── New-user setup checklist ──
+  const SETUP_KEY = 'setup-dismissed-{{ current_user.id }}';
+
+  async function renderSetupBanner() {
+    let dismissed = false;
+    try { dismissed = localStorage.getItem(SETUP_KEY) === '1'; } catch (e) {}
+    const banner = document.getElementById('setup-banner');
+    if (dismissed) { banner.classList.remove('show'); return; }
+    let canvas = false, calendars = false;
+    try {
+      const [feed, cals] = await Promise.all([
+        fetch('/api/canvas/ical').then(r => r.json()),
+        fetch('/api/calendar/accounts').then(r => r.json())
+      ]);
+      canvas = !!feed.url;
+      calendars = cals.some(a => a.type !== 'canvas_ical');
+    } catch (e) { return; }
+    const steps = [
+      { done: canvas, label: 'Connect Canvas', go: "showTab('accounts')" },
+      { done: calendars, label: 'Connect a calendar', go: "showTab('accounts')" },
+      { done: allTasks.length > 0, label: 'Add your first task', go: 'openModal()' },
+    ];
+    if (steps.every(s => s.done)) { banner.classList.remove('show'); return; }
+    document.getElementById('setup-steps').innerHTML = steps.map(s =>
+      `<button class="setup-step ${s.done ? 'done' : ''}" ${s.done ? 'disabled' : `onclick="${s.go}"`}>
+        <span class="tick">${s.done ? '&#10003;' : ''}</span>${s.label}</button>`).join('');
+    banner.classList.add('show');
+  }
+
+  function dismissSetup() {
+    try { localStorage.setItem(SETUP_KEY, '1'); } catch (e) {}
+    document.getElementById('setup-banner').classList.remove('show');
+  }
 
   // ── Shortcuts help ──
   function openShortcuts() { document.getElementById('shortcuts-modal').classList.add('show'); }

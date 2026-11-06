@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sprout — Admin</title>
+  <style>
+    :root {
+      --bg: #0d0f17; --surface: #1a1d2e; --surface-low: #12141f; --surface-btn: #262a48;
+      --border: #2e3358; --border-sub: #1f2237; --text: #e7ebf3; --text-muted: #99a3b8;
+      --text-faint: #66708a; --accent: #5a62c4; --accent-hover: #6d74d4;
+      --accent-soft: rgba(90, 98, 196, 0.22); --ok: #4ade80; --warn: #f59e0b; --bad: #f87171;
+      --radius-sm: 8px; --radius-md: 12px; --radius-lg: 18px;
+      --shadow-lg: 0 20px 50px rgba(0,0,0,0.45); --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+    }
+    body.light {
+      --bg: #f4f6fb; --surface: #ffffff; --surface-low: #eef1f8; --surface-btn: #e7ebf5;
+      --border: #d7dce8; --border-sub: #e7ebf5; --text: #1c2333; --text-muted: #565f78;
+      --text-faint: #8b93ab; --accent-soft: rgba(90, 98, 196, 0.14); --ok: #16a34a; --warn: #b45309; --bad: #dc2626;
+      --shadow-lg: 0 24px 56px rgba(30,41,59,0.16);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg);
+           color: var(--text); min-height: 100vh; -webkit-font-smoothing: antialiased; }
+    a { color: var(--accent-hover); }
+    header { background: var(--surface); border-bottom: 1px solid var(--border); height: 56px; padding: 0 24px;
+             display: flex; align-items: center; gap: 16px; }
+    header h1 { font-size: 15px; font-weight: 700; color: var(--accent); }
+    header .crumb { font-size: 13px; color: var(--text-muted); }
+    header .back { margin-left: auto; font-size: 12px; color: var(--text-muted); text-decoration: none;
+                   padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; }
+    header .back:hover { border-color: var(--accent); color: var(--text); }
+    main { max-width: 1080px; margin: 0 auto; padding: 28px 24px 80px; display: grid; gap: 22px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 22px; }
+    .card h2 { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+    .card .lead { font-size: 13px; color: var(--text-muted); margin-bottom: 16px; line-height: 1.5; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    label.f { display: block; font-size: 11px; font-weight: 600; color: var(--text-faint); text-transform: uppercase;
+              letter-spacing: 0.06em; margin-bottom: 5px; }
+    input[type=text], input[type=email], input[type=url] {
+      width: 100%; padding: 9px 11px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      color: var(--text); font-size: 13px; font-family: inherit; }
+    input:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    .methods { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0; }
+    .method { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 12px 14px; cursor: pointer;
+              display: flex; gap: 10px; align-items: flex-start; }
+    .method:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+    .method input { margin-top: 2px; accent-color: var(--accent); }
+    .method b { display: block; font-size: 13px; margin-bottom: 3px; }
+    .method span { font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+    .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .check { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-muted); cursor: pointer; }
+    .check input { accent-color: var(--accent); }
+    .btn { padding: 8px 16px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; cursor: pointer; border: none;
+           font-family: inherit; transition: background 0.15s var(--ease); text-decoration: none; display: inline-block; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-secondary { background: var(--surface-btn); color: var(--text-muted); }
+    .btn-secondary:hover { color: var(--text); background: var(--border); }
+    .btn-danger { background: rgba(220,38,38,0.12); color: var(--bad); }
+    .btn-danger:hover { background: rgba(220,38,38,0.22); }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+    .msg { font-size: 12px; }
+    .msg.err { color: var(--bad); } .msg.ok { color: var(--ok); }
+    textarea.welcome { width: 100%; min-height: 300px; margin-top: 12px; padding: 12px 14px; background: var(--bg);
+      border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 13px;
+      line-height: 1.55; font-family: inherit; resize: vertical; }
+    .welcome-box { display: none; margin-top: 18px; border-top: 1px solid var(--border-sub); padding-top: 18px; }
+    .welcome-box.show { display: block; }
+    .pw { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; font-weight: 700;
+          background: var(--surface-btn); padding: 4px 10px; border-radius: 6px; letter-spacing: 0.04em; }
+
+    /* Users */
+    .user { border: 1px solid var(--border-sub); border-radius: var(--radius-md); padding: 14px 16px; display: grid;
+            grid-template-columns: minmax(200px, 1.2fr) 2fr auto; gap: 16px; align-items: center; }
+    .user + .user { margin-top: 10px; }
+    .who b { font-size: 14px; display: block; }
+    .who .email { font-size: 12px; color: var(--text-muted); word-break: break-all; }
+    .tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+    .tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 7px;
+           border-radius: 8px; background: var(--surface-btn); color: var(--text-muted); }
+    .tag.admin { background: var(--accent); color: #fff; }
+    .tag.warn { background: rgba(245,158,11,0.18); color: var(--warn); }
+    .steps { display: grid; gap: 5px; font-size: 12px; color: var(--text-muted); }
+    .step { display: flex; gap: 8px; align-items: baseline; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; transform: translateY(-1px); background: var(--text-faint); }
+    .dot.ok { background: var(--ok); } .dot.no { background: transparent; border: 1.5px solid var(--text-faint); }
+    .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+    .step .detail { color: var(--text-faint); word-break: break-all; }
+    .actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+    .empty { font-size: 13px; color: var(--text-faint); }
+
+    /* Server setup */
+    .sys { display: grid; gap: 12px; }
+    .sys-item { border: 1px solid var(--border-sub); border-radius: var(--radius-md); padding: 14px 16px; }
+    .sys-item h3 { font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .sys-item p, .sys-item li { font-size: 12.5px; color: var(--text-muted); line-height: 1.55; }
+    .sys-item ol, .sys-item ul { padding-left: 18px; margin-top: 4px; display: grid; gap: 3px; }
+    .copy-line { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+    .copy-line code { flex: 1; font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+                      padding: 6px 9px; overflow-x: auto; white-space: nowrap; color: var(--text); }
+
+    /* Modal */
+    .overlay { position: fixed; inset: 0; background: rgba(8,9,16,0.55); display: none; align-items: center;
+               justify-content: center; z-index: 50; padding: 16px; }
+    .overlay.show { display: flex; }
+    .modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 22px;
+             width: 520px; max-width: 100%; box-shadow: var(--shadow-lg); }
+    .modal h3 { font-size: 15px; margin-bottom: 6px; }
+    .modal p { font-size: 12.5px; color: var(--text-muted); line-height: 1.55; margin-bottom: 12px; }
+    .modal .btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; align-items: center; }
+
+    @media (max-width: 760px) {
+      .grid-2, .methods { grid-template-columns: 1fr; }
+      .user { grid-template-columns: 1fr; }
+      .actions { flex-direction: row; flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <h1>&#127793; Sprout</h1>
+  <span class="crumb">Admin</span>
+  <a class="back" href="/">&larr; Back to board</a>
+</header>
+
+<main>
+  <!-- ── Add a user ── -->
+  <section class="card">
+    <h2>Add a user</h2>
+    <p class="lead">Creates their account and writes a welcome message with their sign-in details and setup steps,
+      ready to copy into a text or email. Each user gets their own private board.</p>
+    <div class="grid-2">
+      <div><label class="f" for="new-name">Name</label><input type="text" id="new-name" placeholder="Jordan Smith" /></div>
+      <div><label class="f" for="new-email">Email</label><input type="email" id="new-email" placeholder="jordan@example.com" /></div>
+    </div>
+    <div class="methods">
+      <label class="method">
+        <input type="radio" name="method" value="password" checked />
+        <div><b>Email &amp; temporary password</b>
+          <span>Sprout makes a one-time password. They choose their own the first time they sign in.</span></div>
+      </label>
+      <label class="method">
+        <input type="radio" name="method" value="google" />
+        <div><b>Google account</b>
+          <span>They click “Continue with Google” and pick this address. Must be a Google/Gmail account.</span></div>
+      </label>
+    </div>
+    <div class="row">
+      <label class="check"><input type="checkbox" id="new-admin" /> Make them an admin too</label>
+      <span style="flex:1"></span>
+      <span class="msg" id="create-msg"></span>
+      <button class="btn btn-primary" onclick="createUser()">Create user</button>
+    </div>
+
+    <div class="welcome-box" id="welcome-box">
+      <div class="row">
+        <div style="flex:1">
+          <h2 id="welcome-title">Send this to them</h2>
+          <p class="lead" id="welcome-lead" style="margin:4px 0 0"></p>
+        </div>
+        <button class="btn btn-secondary" onclick="copyWelcome()">Copy message</button>
+        <a class="btn btn-primary" id="welcome-mail" href="#">Open in email</a>
+      </div>
+      <textarea class="welcome" id="welcome-text"></textarea>
+    </div>
+  </section>
+
+  <!-- ── Users ── -->
+  <section class="card">
+    <div class="row" style="margin-bottom:4px">
+      <h2 style="flex:1">Users</h2>
+      <span class="msg" id="users-msg"></span>
+    </div>
+    <p class="lead">Where each person is in setup. Calendars have to be connected by the user themselves
+      (they sign in to Google/Microsoft/Apple), but you can paste in their Canvas feed for them.</p>
+    <div id="users"><div class="empty">Loading…</div></div>
+  </section>
+
+  <!-- ── Server setup ── -->
+  <section class="card">
+    <h2>Server setup checklist</h2>
+    <p class="lead">One-time settings outside Sprout that decide which sign-ins and calendars work for everyone.
+      Values marked “copy” are exactly what to paste.</p>
+    <div class="sys" id="sys"><div class="empty">Loading…</div></div>
+  </section>
+</main>
+
+<!-- Canvas feed modal -->
+<div class="overlay" id="canvas-modal" onclick="if(event.target===this)closeCanvasModal()">
+  <div class="modal">
+    <h3 id="canvas-modal-title">Canvas feed</h3>
+    <p>Get this link from them (or from their Canvas if you're helping in person): in Canvas, open
+      <b>Calendar</b>, then click the <b>Calendar Feed</b> link under the list of calendars and copy it.
+      It looks like <code>https://school.instructure.com/feeds/calendars/user_….ics</code>.</p>
+    <p>After saving, they should open <b>Accounts → Sync Now</b> once to name their courses. Until then, the daily
+      6&nbsp;am sync brings assignments in under Canvas's course codes.</p>
+    <input type="url" id="canvas-url" placeholder="https://yourschool.instructure.com/feeds/calendars/user_XXXX.ics" />
+    <div class="btns">
+      <span class="msg" id="canvas-msg" style="margin-right:auto"></span>
+      <button class="btn btn-danger" id="canvas-remove" onclick="removeCanvas()">Remove feed</button>
+      <button class="btn btn-secondary" onclick="closeCanvasModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveCanvas()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  if (localStorage.getItem('desk-theme') === 'light') document.body.classList.add('light');
+
+  let users = [];
+  let sys = null;
+  let canvasUserId = null;
+
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function when(iso) {
+    if (!iso) return null;
+    const d = new Date(iso);
+    const days = Math.floor((Date.now() - d) / 86400000);
+    if (days <= 0) return 'today';
+    if (days === 1) return 'yesterday';
+    if (days < 30) return `${days} days ago`;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  async function api(method, url, body) {
+    const r = await fetch(url, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined
+    });
+    let data = {};
+    try { data = await r.json(); } catch (e) {}
+    if (!r.ok || data.ok === false) throw new Error(data.error || `Request failed (${r.status})`);
+    return data;
+  }
+
+  // ── Welcome message ──
+  const CAL_LABEL = { google: 'Google', outlook: 'Outlook', icloud: 'iCloud' };
+
+  function welcomeText(u, tempPassword) {
+    const first = (u.name || '').split(' ')[0] || 'there';
+    const url = sys ? sys.app_url : location.origin;
+    const google = !tempPassword && !u.has_password;
+    const signIn = google
+      ? `2. Click "Continue with Google" and choose ${u.email}.`
+      : `2. Sign in with:\n   Email: ${u.email}\n   Temporary password: ${tempPassword || '(ask me for it)'}\n   You'll be asked to pick your own password right away.`;
+    return `Hi ${first},
+
+I've set you up on Sprout. It puts your Canvas assignments, calendars and to-dos on one board.
+
+1. Go to ${url}
+${signIn}
+
+3. Connect your stuff on the Accounts tab (top of the page):
+
+   Canvas assignments
+   - In Canvas, open Calendar, then click the "Calendar Feed" link under the list of calendars and copy it.
+   - In Sprout, paste it under Canvas, click Save Feed, then Sync Now.
+   - Give each course a short name (like "Econ 101") and click Save & Sync. New assignments then come in automatically every morning.
+
+   Google Calendar or Outlook
+   - Click "Connect Google Calendar" or "Connect Outlook" and sign in.
+
+   iCloud Calendar
+   - At account.apple.com, go to Sign-In and Security > App-Specific Passwords and make one called "Sprout".
+   - In Sprout, enter your Apple ID and that password, then click Connect iCloud.
+
+4. Back on the board, click "+ Add task" in any column. Type \\ while naming a task to set a due date, priority or class. Press ? any time to see all the shortcuts.
+
+Let me know if anything doesn't work!`;
+  }
+
+  function showWelcome(u, tempPassword, title) {
+    document.getElementById('welcome-title').textContent = title;
+    document.getElementById('welcome-lead').innerHTML = tempPassword
+      ? `Temporary password for ${esc(u.email)}: <span class="pw">${esc(tempPassword)}</span> — it's only shown now, so send it before leaving this page.`
+      : `${esc(u.email)} signs in with Google, so there's no password to send.`;
+    const text = welcomeText(u, tempPassword);
+    document.getElementById('welcome-text').value = text;
+    document.getElementById('welcome-mail').href =
+      `mailto:${encodeURIComponent(u.email)}?subject=${encodeURIComponent('Your Sprout account')}&body=${encodeURIComponent(text)}`;
+    const box = document.getElementById('welcome-box');
+    box.classList.add('show');
+    box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  async function copyWelcome() {
+    const ta = document.getElementById('welcome-text');
+    try { await navigator.clipboard.writeText(ta.value); } catch (e) { ta.select(); document.execCommand('copy'); }
+    flash('create-msg', 'Copied.', true);
+  }
+
+  function flash(id, text, ok) {
+    const el = document.getElementById(id);
+    el.className = 'msg ' + (ok ? 'ok' : 'err');
+    el.textContent = text;
+    if (ok) setTimeout(() => { if (el.textContent === text) el.textContent = ''; }, 3000);
+  }
+
+  // ── Create ──
+  async function createUser() {
+    const name = document.getElementById('new-name').value.trim();
+    const email = document.getElementById('new-email').value.trim();
+    const method = document.querySelector('input[name=method]:checked').value;
+    const is_admin = document.getElementById('new-admin').checked;
+    if (!email) return flash('create-msg', 'Enter their email.', false);
+    try {
+      const d = await api('POST', '/api/admin/users', { name, email, method, is_admin });
+      document.getElementById('new-name').value = '';
+      document.getElementById('new-email').value = '';
+      document.getElementById('new-admin').checked = false;
+      flash('create-msg', 'User created.', true);
+      await loadUsers();
+      const u = users.find(u => u.id === d.id) || { name, email: email.toLowerCase(), has_password: method === 'password' };
+      showWelcome(u, d.temp_password, `Send this to ${name || email}`);
+    } catch (e) { flash('create-msg', e.message, false); }
+  }
+
+  // ── Users list ──
+  async function loadUsers() {
+    try {
+      users = await api('GET', '/api/admin/users');
+      renderUsers();
+    } catch (e) {
+      document.getElementById('users').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderUsers() {
+    const el = document.getElementById('users');
+    if (!users.length) { el.innerHTML = '<div class="empty">No users yet.</div>'; return; }
+    el.innerHTML = users.map(u => {
+      const signedIn = when(u.last_login_at);
+      const methods = [u.has_google ? 'Google' : null, u.has_password ? 'Password' : null].filter(Boolean);
+      const cals = u.calendars.map(c => `${CAL_LABEL[c.type] || c.type} (${c.label})`).join(', ');
+      return `<div class="user">
+        <div class="who">
+          <b>${esc(u.name || u.email.split('@')[0])}${u.is_me ? ' <span class="tag">You</span>' : ''}</b>
+          <div class="email">${esc(u.email)}</div>
+          <div class="tags">
+            ${u.is_admin ? '<span class="tag admin">Admin</span>' : ''}
+            ${methods.length ? methods.map(m => `<span class="tag">${m}</span>`).join('') : '<span class="tag">Google (not yet linked)</span>'}
+            ${u.must_change_password ? '<span class="tag warn">Temp password</span>' : ''}
+          </div>
+        </div>
+        <div class="steps">
+          <div class="step"><span class="dot ${signedIn ? 'ok' : 'no'}"></span>
+            <span>${signedIn ? `Signed in ${signedIn}` : 'Hasn’t signed in yet'}
+              <span class="detail">· added ${esc(when(u.created_at) || '—')}</span></span></div>
+          <div class="step"><span class="dot ${u.canvas_url ? (u.course_count ? 'ok' : 'warn') : 'no'}"></span>
+            <span>${u.canvas_url
+              ? (u.course_count ? `Canvas connected · ${u.course_count} course${u.course_count === 1 ? '' : 's'} named`
+                                : 'Canvas feed saved · courses not named yet')
+              : 'Canvas not connected'}</span></div>
+          <div class="step"><span class="dot ${u.calendars.length ? 'ok' : 'no'}"></span>
+            <span>${u.calendars.length ? `Calendars: <span class="detail">${esc(cals)}</span>` : 'No calendars connected'}</span></div>
+          <div class="step"><span class="dot ${u.task_count ? 'ok' : 'no'}"></span>
+            <span>${u.task_count} task${u.task_count === 1 ? '' : 's'} on their board</span></div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-secondary btn-sm" onclick="welcomeFor(${u.id})">Welcome message</button>
+          <button class="btn btn-secondary btn-sm" onclick="openCanvasModal(${u.id})">${u.canvas_url ? 'Edit Canvas feed' : 'Add Canvas feed'}</button>
+          <button class="btn btn-secondary btn-sm" onclick="resetPassword(${u.id})">${u.has_password ? 'Reset password' : 'Set temp password'}</button>
+          ${u.is_me ? '' : `<button class="btn btn-secondary btn-sm" onclick="toggleAdmin(${u.id}, ${!u.is_admin})">${u.is_admin ? 'Remove admin' : 'Make admin'}</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteUser(${u.id})">Delete</button>`}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function welcomeFor(id) {
+    const u = users.find(u => u.id === id);
+    showWelcome(u, null, `Setup steps for ${u.name || u.email}`);
+    if (u.has_password) {
+      document.getElementById('welcome-lead').innerHTML =
+        `Passwords aren't stored in a readable form, so this message doesn't include one. Use <b>Reset password</b> to make a new temporary one.`;
+    }
+  }
+
+  async function resetPassword(id) {
+    const u = users.find(u => u.id === id);
+    if (!confirm(`Make a new temporary password for ${u.email}? Their current password stops working.`)) return;
+    try {
+      const d = await api('POST', `/api/admin/users/${id}/reset-password`);
+      await loadUsers();
+      showWelcome(users.find(x => x.id === id), d.temp_password, `New password for ${u.name || u.email}`);
+    } catch (e) { flash('users-msg', e.message, false); }
+  }
+
+  async function toggleAdmin(id, makeAdmin) {
+    try {
+      await api('PATCH', `/api/admin/users/${id}`, { is_admin: makeAdmin });
+      loadUsers();
+    } catch (e) { flash('users-msg', e.message, false); }
+  }
+
+  async function deleteUser(id) {
+    const u = users.find(u => u.id === id);
+    const typed = prompt(`This permanently deletes ${u.email} and everything on their board (${u.task_count} tasks, connected calendars, Canvas feed).\n\nType their email to confirm:`);
+    if (typed === null) return;
+    if (typed.trim().toLowerCase() !== u.email) return flash('users-msg', 'Email didn’t match — nothing deleted.', false);
+    try {
+      await api('DELETE', `/api/admin/users/${id}`);
+      document.getElementById('welcome-box').classList.remove('show');
+      flash('users-msg', `Deleted ${u.email}.`, true);
+      loadUsers();
+    } catch (e) { flash('users-msg', e.message, false); }
+  }
+
+  // ── Canvas feed for a user ──
+  function openCanvasModal(id) {
+    const u = users.find(u => u.id === id);
+    canvasUserId = id;
+    document.getElementById('canvas-modal-title').textContent = `Canvas feed for ${u.name || u.email}`;
+    document.getElementById('canvas-url').value = u.canvas_url || '';
+    document.getElementById('canvas-remove').style.display = u.canvas_url ? '' : 'none';
+    document.getElementById('canvas-msg').textContent = '';
+    document.getElementById('canvas-modal').classList.add('show');
+    document.getElementById('canvas-url').focus();
+  }
+
+  function closeCanvasModal() {
+    document.getElementById('canvas-modal').classList.remove('show');
+  }
+
+  async function saveCanvas() {
+    try {
+      await api('PUT', `/api/admin/users/${canvasUserId}/canvas`, { url: document.getElementById('canvas-url').value });
+      closeCanvasModal();
+      flash('users-msg', 'Canvas feed saved.', true);
+      loadUsers();
+    } catch (e) { flash('canvas-msg', e.message, false); }
+  }
+
+  async function removeCanvas() {
+    if (!confirm('Remove this Canvas feed? Tasks already on their board stay.')) return;
+    try {
+      await api('DELETE', `/api/admin/users/${canvasUserId}/canvas`);
+      closeCanvasModal();
+      loadUsers();
+    } catch (e) { flash('canvas-msg', e.message, false); }
+  }
+
+  // ── Server setup checklist ──
+  function copyLine(value) {
+    return `<div class="copy-line"><code>${esc(value)}</code>
+      <button class="btn btn-secondary btn-sm" onclick="navigator.clipboard.writeText(${esc(JSON.stringify(value))});this.textContent='Copied'">Copy</button></div>`;
+  }
+
+  function statusDot(ok) {
+    return `<span class="dot ${ok ? 'ok' : 'bad'}"></span>`;
+  }
+
+  function renderSystem() {
+    const s = sys;
+    const personalOnly = (s.outlook_tenant || '').toLowerCase() === 'consumers';
+    document.getElementById('sys').innerHTML = `
+      <div class="sys-item">
+        <h3>${statusDot(s.google)} Google sign-in &amp; Google Calendar ${s.google ? '' : '— not configured'}</h3>
+        <p>${s.google
+          ? 'Configured. Two things to check in Google Cloud Console for each new person:'
+          : 'Set <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> in Railway → Variables. Then:'}</p>
+        <ol>
+          <li><b>Test users.</b> While the OAuth app's publishing status is “Testing”, Google blocks anyone not on its list.
+            Add each user's Gmail under <a href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noopener">Google Auth Platform → Audience → Test users</a>
+            (up to 100). Calendar connections made in Testing mode also expire after 7 days, so users may need to reconnect weekly.
+            Publishing to Production removes both limits, but because Sprout asks to read calendars and send Gmail, Google will require a verification review.</li>
+          <li><b>Redirect URIs.</b> Under <a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener">Clients</a> → your web client → Authorized redirect URIs, these two must be listed:
+            ${s.google_redirects.map(copyLine).join('')}</li>
+        </ol>
+      </div>
+
+      <div class="sys-item">
+        <h3>${statusDot(s.outlook)} Outlook / Microsoft 365 calendars ${s.outlook ? '' : '— not configured'}</h3>
+        ${s.outlook ? '' : '<p>Set <code>OUTLOOK_CLIENT_ID</code> and <code>OUTLOOK_SECRET</code> in Railway → Variables from an Azure app registration.</p>'}
+        <ul>
+          <li><b>Who can connect:</b> tenant is <code>${esc(s.outlook_tenant || '—')}</code>.
+            ${personalOnly
+              ? 'That allows <b>personal Microsoft accounts only</b> (outlook.com, hotmail, live). To let people connect a school or work Microsoft 365 calendar, set <code>OUTLOOK_TENANT=common</code> in Railway and set the Azure app to accept “accounts in any organizational directory and personal Microsoft accounts”. Some schools also require an IT admin to approve the app.'
+              : 'Check it matches the account types your users have.'}</li>
+          <li><b>Redirect URI.</b> In <a href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank" rel="noopener">Azure → App registrations</a> → your app → Authentication → Web, add:
+            ${copyLine(s.outlook_redirect)}</li>
+        </ul>
+      </div>
+
+      <div class="sys-item">
+        <h3>${statusDot(true)} iCloud Calendar</h3>
+        <p>Nothing to set up on the server. Each person makes an app-specific password at
+          <a href="https://account.apple.com" target="_blank" rel="noopener">account.apple.com</a> → Sign-In and Security → App-Specific Passwords
+          (needs two-factor authentication on their Apple ID) and enters it on their Accounts tab.</p>
+      </div>
+
+      <div class="sys-item">
+        <h3>${statusDot(true)} Canvas</h3>
+        <p>Nothing to set up on the server — each person uses their own Canvas calendar feed link, which works with any school's Canvas.
+          Feeds sync automatically every day at 6&nbsp;am, and users can click Sync Now any time. You can paste a feed in for someone from the Users list above.</p>
+      </div>
+
+      <div class="sys-item">
+        <h3>${statusDot(s.gemini)} Voice assistant ${s.gemini ? '' : '— not configured'}</h3>
+        <p>${s.gemini ? 'Configured. Works for every user in Chrome, Edge or Safari (they press Space or the mic button).'
+                      : 'Set <code>GEMINI_API_KEY</code> in Railway → Variables to turn on voice commands.'}</p>
+      </div>
+
+      <div class="sys-item">
+        <h3>${statusDot(true)} Admins</h3>
+        <p>Always admin via the <code>ADMIN_EMAILS</code> variable in Railway:
+          <b>${s.admin_emails.length ? esc(s.admin_emails.join(', ')) : 'none set'}</b>.
+          Use <b>Make admin</b> above to add others without touching Railway.</p>
+        <p style="margin-top:6px">Anyone can still create their own account from the sign-in page (“No account? Create one”); they won't be admins.</p>
+      </div>`;
+  }
+
+  async function loadSystem() {
+    try { sys = await api('GET', '/api/admin/system'); renderSystem(); }
+    catch (e) { document.getElementById('sys').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeCanvasModal(); });
+  document.getElementById('canvas-url').addEventListener('keydown', e => { if (e.key === 'Enter') saveCanvas(); });
+  loadSystem().then(loadUsers);
+</script>
+</body>
+</html>

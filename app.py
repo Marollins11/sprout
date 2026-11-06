@@ -12,24 +12,46 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 DB = os.getenv("DATABASE_PATH", "tasks.db")
 
-from config import FLASK_SECRET, GEMINI_API_KEY
+from config import FLASK_SECRET, GEMINI_API_KEY, ADMIN_EMAILS
 app.secret_key = FLASK_SECRET
 
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
 class User(UserMixin):
-    def __init__(self, id, email, name):
+    def __init__(self, id, email, name, is_admin=False, must_change_password=False):
         self.id = str(id)
         self.email = email
         self.name = name or email
+        self.is_admin = bool(is_admin)
+        self.must_change_password = bool(must_change_password)
+
+    @classmethod
+    def from_row(cls, row):
+        return cls(row['id'], row['email'], row['name'], row['is_admin'], row['must_change_password'])
 
 @login_manager.user_loader
 def load_user(user_id):
     row = get_db().execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
     if not row:
         return None
-    return User(row['id'], row['email'], row['name'])
+    return User.from_row(row)
+
+
+def _admin_emails():
+    return {e.strip().lower() for e in (ADMIN_EMAILS or "").split(",") if e.strip()}
+
+
+def _sign_in(row, remember=False, promote=True):
+    """Log a user in, stamp last_login_at, and promote them if listed in ADMIN_EMAILS.
+    Self-registration passes promote=False so nobody can claim an admin address by signing up first."""
+    db = get_db()
+    if promote and row['email'].lower() in _admin_emails() and not row['is_admin']:
+        db.execute("UPDATE users SET is_admin=1 WHERE id=?", (row['id'],))
+    db.execute("UPDATE users SET last_login_at=? WHERE id=?", (datetime.now().isoformat(), row['id']))
+    db.commit()
+    row = db.execute("SELECT * FROM users WHERE id=?", (row['id'],)).fetchone()
+    login_user(User.from_row(row), remember=remember)
 
 _genai_client = None
 
@@ -167,6 +189,12 @@ def init_db():
         name TEXT,
         created_at TEXT
     )""")
+    for col, defn in [("is_admin", "INTEGER DEFAULT 0"), ("must_change_password", "INTEGER DEFAULT 0"),
+                      ("last_login_at", "TEXT")]:
+        try:
+            db.execute(f"ALTER TABLE users ADD COLUMN {col} {defn}")
+        except Exception:
+            pass
     db.execute("""CREATE TABLE IF NOT EXISTS canvas_feeds (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER UNIQUE NOT NULL,
@@ -421,10 +449,18 @@ def handle_voice_reply(raw, uid=None):
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 _PUBLIC = {'login', 'google_login_start', 'google_login_callback', 'static'}
+_PASSWORD_CHANGE_OK = {'change_password', 'logout', 'static'}
 
 @app.before_request
 def require_login():
-    if request.endpoint in _PUBLIC or current_user.is_authenticated:
+    if request.endpoint in _PUBLIC:
+        return
+    if current_user.is_authenticated:
+        # Admin-created accounts start with a temporary password that must be replaced first.
+        if current_user.must_change_password and request.endpoint not in _PASSWORD_CHANGE_OK:
+            if request.path.startswith('/api/'):
+                return jsonify({"ok": False, "error": "Password change required"}), 403
+            return redirect(url_for('change_password'))
         return
     # Return JSON for API routes so fetch() doesn't receive an HTML redirect
     if request.path.startswith('/api/'):
@@ -470,7 +506,7 @@ def login():
             )
             db.commit()
             row = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-            login_user(User(row['id'], row['email'], row['name']), remember=remember)
+            _sign_in(row, remember=remember, promote=False)
             return redirect('/')
         else:
             row = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
@@ -478,7 +514,7 @@ def login():
                not check_password_hash(row['password_hash'], password):
                 flash('Invalid email or password.', 'error')
                 return redirect('/login')
-            login_user(User(row['id'], row['email'], row['name']), remember=remember)
+            _sign_in(row, remember=remember)
             return redirect('/')
     return render_template('login.html')
 
@@ -487,6 +523,32 @@ def login():
 def logout():
     logout_user()
     return redirect('/login')
+
+
+@app.route('/account/password', methods=['GET', 'POST'])
+def change_password():
+    forced = current_user.must_change_password
+    if request.method == 'POST':
+        db = get_db()
+        row = db.execute("SELECT * FROM users WHERE id=?", (current_user.id,)).fetchone()
+        current = request.form.get('current', '')
+        new = request.form.get('password', '')
+        confirm = request.form.get('confirm', '')
+        if not forced and row['password_hash'] and not check_password_hash(row['password_hash'], current):
+            flash('Your current password is incorrect.', 'error')
+        elif len(new) < 8:
+            flash('Use at least 8 characters.', 'error')
+        elif new != confirm:
+            flash("The two passwords don't match.", 'error')
+        else:
+            db.execute("UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?",
+                       (generate_password_hash(new, method='pbkdf2:sha256'), current_user.id))
+            db.commit()
+            flash('Password updated.', 'success')
+            return redirect('/')
+        return redirect(url_for('change_password'))
+    row = get_db().execute("SELECT password_hash FROM users WHERE id=?", (current_user.id,)).fetchone()
+    return render_template('change_password.html', forced=forced, has_password=bool(row['password_hash']))
 
 
 def _google_flow(redirect_uri, scopes=None):
@@ -583,18 +645,18 @@ def google_login_callback():
             "SELECT * FROM users WHERE email=? OR google_id=?", (email, google_id)
         ).fetchone()
         if row:
-            db.execute("UPDATE users SET google_id=?,name=? WHERE id=?",
-                       (google_id, name, row['id']))
+            # Signing in with Google proves who they are, so a pending temporary password is moot.
+            db.execute("UPDATE users SET google_id=?,name=?,must_change_password=0 WHERE id=?",
+                       (google_id, name or row['name'], row['id']))
             db.commit()
-            login_user(User(row['id'], row['email'], name))
         else:
             db.execute(
                 "INSERT INTO users (email,google_id,name,created_at) VALUES (?,?,?,?)",
                 (email, google_id, name, datetime.now().isoformat())
             )
             db.commit()
-            row = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-            login_user(User(row['id'], email, name))
+        row = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+        _sign_in(row)
         return redirect('/')
     except Exception as e:
         flash(f'Google login failed: {e}', 'error')
@@ -1036,11 +1098,11 @@ def do_canvas_sync():
 
 # ── Canvas iCal feed (per-user) ───────────────────────────────────────────────
 
-def _get_user_mappings(db=None):
+def _get_user_mappings(db=None, uid=None):
     db = db or get_db()
     rows = db.execute(
         "SELECT course_code, course_name FROM course_mappings WHERE user_id=?",
-        (current_user.id,)
+        (uid if uid is not None else current_user.id,)
     ).fetchall()
     return {r["course_code"]: r["course_name"] for r in rows}
 
@@ -1054,11 +1116,11 @@ def _get_user_mapping_colors(db=None):
     return {r["course_code"]: r["color"] for r in rows}
 
 
-def _get_kanban_disabled_codes(db=None):
+def _get_kanban_disabled_codes(db=None, uid=None):
     db = db or get_db()
     rows = db.execute(
         "SELECT course_code FROM course_mappings WHERE user_id=? AND kanban=0",
-        (current_user.id,)
+        (uid if uid is not None else current_user.id,)
     ).fetchall()
     return {r["course_code"] for r in rows}
 
@@ -1218,9 +1280,9 @@ def _sync_canvas_ical(uid):
         ).fetchone()
         if not row:
             return {"ok": False, "error": "No Canvas feed configured"}
-        mappings = _get_user_mappings(db)
+        mappings = _get_user_mappings(db, uid)
         events = fetch_ical_events(row["url"], mappings=mappings)
-        kanban_disabled = _get_kanban_disabled_codes(db)
+        kanban_disabled = _get_kanban_disabled_codes(db, uid)
         # existing_titles catches tasks still on the board (done, moved, recategorized —
         # all still dedupe correctly since the row and its title persist). synced_uids is a
         # permanent ledger keyed to Canvas's own event UID, so a task the user DELETED isn't
@@ -1449,6 +1511,180 @@ def icloud_auth():
     )
     db.commit()
     return jsonify({"ok": True})
+
+
+# ── Admin ─────────────────────────────────────────────────────────────────────
+
+from functools import wraps
+
+def admin_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not current_user.is_authenticated or not current_user.is_admin:
+            if request.path.startswith('/api/'):
+                return jsonify({"ok": False, "error": "Admins only"}), 403
+            return redirect('/')
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+# Every table that holds a user's data, for deleting an account cleanly.
+_USER_TABLES = ["tasks", "projects", "reminders", "calendar_accounts", "canvas_feeds",
+                "canvas_synced_items", "course_mappings", "board_columns"]
+
+
+def _temp_password():
+    # Readable but unguessable: three short chunks, no look-alike characters.
+    alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
+    return "-".join("".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(3))
+
+
+@app.route("/admin")
+@admin_required
+def admin_page():
+    return render_template("admin.html")
+
+
+@app.route("/api/admin/users")
+@admin_required
+def admin_list_users():
+    db = get_db()
+    users = []
+    for u in db.execute("SELECT * FROM users ORDER BY created_at").fetchall():
+        uid = u["id"]
+        feed = db.execute("SELECT url FROM canvas_feeds WHERE user_id=?", (uid,)).fetchone()
+        cals = db.execute(
+            "SELECT type, label FROM calendar_accounts WHERE user_id=? AND type!='canvas_ical' ORDER BY created_at",
+            (uid,)
+        ).fetchall()
+        users.append({
+            "id": uid,
+            "email": u["email"],
+            "name": u["name"],
+            "is_admin": bool(u["is_admin"]),
+            "is_me": str(uid) == current_user.id,
+            "has_password": bool(u["password_hash"]),
+            "has_google": bool(u["google_id"]),
+            "must_change_password": bool(u["must_change_password"]),
+            "created_at": u["created_at"],
+            "last_login_at": u["last_login_at"],
+            "canvas_url": feed["url"] if feed else None,
+            "course_count": db.execute("SELECT COUNT(*) FROM course_mappings WHERE user_id=?", (uid,)).fetchone()[0],
+            "calendars": [dict(c) for c in cals],
+            "task_count": db.execute(
+                "SELECT COUNT(*) FROM tasks WHERE user_id=? AND (archived IS NULL OR archived=0)", (uid,)
+            ).fetchone()[0],
+        })
+    return jsonify(users)
+
+
+@app.route("/api/admin/users", methods=["POST"])
+@admin_required
+def admin_create_user():
+    d = request.json or {}
+    email = (d.get("email") or "").strip().lower()
+    name = (d.get("name") or "").strip() or None
+    method = d.get("method") or "password"
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return jsonify({"ok": False, "error": "Enter a valid email address."}), 400
+    db = get_db()
+    if db.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone():
+        return jsonify({"ok": False, "error": "A user with that email already exists."}), 400
+    temp = _temp_password() if method == "password" else None
+    db.execute(
+        "INSERT INTO users (email,name,password_hash,must_change_password,is_admin,created_at) VALUES (?,?,?,?,?,?)",
+        (email, name, generate_password_hash(temp, method='pbkdf2:sha256') if temp else None,
+         1 if temp else 0, 1 if d.get("is_admin") else 0, datetime.now().isoformat())
+    )
+    db.commit()
+    row = db.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
+    return jsonify({"ok": True, "id": row["id"], "temp_password": temp})
+
+
+@app.route("/api/admin/users/<int:uid>", methods=["PATCH"])
+@admin_required
+def admin_update_user(uid):
+    d = request.json or {}
+    db = get_db()
+    if "is_admin" in d:
+        if str(uid) == current_user.id and not d["is_admin"]:
+            return jsonify({"ok": False, "error": "You can't remove your own admin access."}), 400
+        db.execute("UPDATE users SET is_admin=? WHERE id=?", (1 if d["is_admin"] else 0, uid))
+    if "name" in d:
+        db.execute("UPDATE users SET name=? WHERE id=?", ((d["name"] or "").strip() or None, uid))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/users/<int:uid>/reset-password", methods=["POST"])
+@admin_required
+def admin_reset_password(uid):
+    temp = _temp_password()
+    db = get_db()
+    db.execute("UPDATE users SET password_hash=?, must_change_password=1 WHERE id=?",
+               (generate_password_hash(temp, method='pbkdf2:sha256'), uid))
+    db.commit()
+    return jsonify({"ok": True, "temp_password": temp})
+
+
+@app.route("/api/admin/users/<int:uid>", methods=["DELETE"])
+@admin_required
+def admin_delete_user(uid):
+    if str(uid) == current_user.id:
+        return jsonify({"ok": False, "error": "You can't delete your own account."}), 400
+    db = get_db()
+    task_ids = [r[0] for r in db.execute("SELECT id FROM tasks WHERE user_id=?", (uid,)).fetchall()]
+    for tid in task_ids:
+        db.execute("DELETE FROM subtasks WHERE task_id=?", (tid,))
+        db.execute("DELETE FROM status_updates WHERE task_id=?", (tid,))
+    for table in _USER_TABLES:
+        db.execute(f"DELETE FROM {table} WHERE user_id=?", (uid,))
+    db.execute("DELETE FROM users WHERE id=?", (uid,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/users/<int:uid>/canvas", methods=["PUT"])
+@admin_required
+def admin_set_canvas(uid):
+    url = ((request.json or {}).get("url") or "").strip()
+    if not url.startswith("http"):
+        return jsonify({"ok": False, "error": "Paste the full feed URL (it starts with https://)."}), 400
+    db = get_db()
+    db.execute(
+        "INSERT INTO canvas_feeds (user_id,url,created_at) VALUES (?,?,?) "
+        "ON CONFLICT(user_id) DO UPDATE SET url=excluded.url",
+        (uid, url, datetime.now().isoformat())
+    )
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/users/<int:uid>/canvas", methods=["DELETE"])
+@admin_required
+def admin_remove_canvas(uid):
+    db = get_db()
+    db.execute("DELETE FROM canvas_feeds WHERE user_id=?", (uid,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/system")
+@admin_required
+def admin_system():
+    """What the server is configured for, plus the exact values to paste into Google/Azure."""
+    import config as cfg
+    base = _https_base()
+    return jsonify({
+        "app_url": base,
+        "admin_emails": sorted(_admin_emails()),
+        "google": bool(getattr(cfg, "GOOGLE_CLIENT_ID", None) and getattr(cfg, "GOOGLE_CLIENT_SECRET", None)),
+        "google_redirects": [base + "/auth/google/callback", base + "/api/calendar/auth/google/callback"],
+        "outlook": bool(getattr(cfg, "OUTLOOK_CLIENT_ID", None) and getattr(cfg, "OUTLOOK_SECRET", None)),
+        "outlook_tenant": getattr(cfg, "OUTLOOK_TENANT", None),
+        "outlook_redirect": request.host_url.rstrip("/") + "/api/calendar/auth/outlook/callback",
+        "gemini": bool(GEMINI_API_KEY),
+    })
 
 
 # ── Background jobs ───────────────────────────────────────────────────────────
